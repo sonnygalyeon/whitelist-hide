@@ -79,7 +79,8 @@ pub fn start(config_path: &Path) -> Result<SessionReport, ControllerError> {
     let report = match launch {
         Ok(report) => report,
         Err(error) => {
-            let _ = cleanup_network(None);
+            let state = store.load().ok().flatten();
+            let _ = cleanup_network(state.as_ref());
             let _ = stop_if_owned(&store);
             return Err(error);
         }
@@ -428,19 +429,21 @@ fn cleanup_linux_nft() -> Result<(), ControllerError> {
 }
 
 fn cleanup_macos_pf(state: Option<&RuntimeState>) -> Result<(), ControllerError> {
-    let flush = Command::new("/sbin/pfctl")
+    let output = Command::new("/sbin/pfctl")
         .args(["-a", MACOS_PF_ANCHOR, "-F", "all"])
         .stdout(Stdio::null())
         .stderr(Stdio::piped())
-        .output();
+        .output()
+        .map_err(|source| ControllerError::Io {
+            path: PathBuf::from("/sbin/pfctl"),
+            source,
+        })?;
 
-    if let Ok(output) = flush {
-        if !output.status.success() {
-            return Err(ControllerError::Command {
-                program: "/sbin/pfctl".to_owned(),
-                detail: String::from_utf8_lossy(&output.stderr).trim().to_owned(),
-            });
-        }
+    if !output.status.success() {
+        return Err(ControllerError::Command {
+            program: "/sbin/pfctl".to_owned(),
+            detail: String::from_utf8_lossy(&output.stderr).trim().to_owned(),
+        });
     }
 
     if let Some(token) = state.and_then(|value| value.pf_token.as_deref()) {
