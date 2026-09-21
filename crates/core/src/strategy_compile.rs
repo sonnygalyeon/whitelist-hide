@@ -54,23 +54,13 @@ pub fn compile_strategy(
         .map_err(|error| CompileError::InvalidStrategy(error.to_string()))?;
 
     let base = strategy_path.parent().unwrap_or_else(|| Path::new("."));
-    let common = compile_common_args(strategy, base)?;
-    let mut args = Vec::new();
 
     if engine == EngineFlavor::Winws {
-        if !strategy.filters.tcp_ports.is_empty() {
-            args.push(format!(
-                "--wf-tcp-out={}",
-                format_port_ranges(&strategy.filters.tcp_ports)
-            ));
-        }
-        if !strategy.filters.udp_ports.is_empty() {
-            args.push(format!(
-                "--wf-udp-out={}",
-                format_port_ranges(&strategy.filters.udp_ports)
-            ));
-        }
+        return compile_winws2(strategy, base);
     }
+
+    let common = compile_common_args(strategy, base)?;
+    let mut args = Vec::new();
 
     if !strategy.filters.tcp_ports.is_empty() {
         args.push(format!(
@@ -92,6 +82,154 @@ pub fn compile_strategy(
     }
 
     Ok(CompiledStrategy { engine, args })
+}
+
+fn compile_winws2(
+    strategy: &StrategyDefinition,
+    base: &Path,
+) -> Result<CompiledStrategy, CompileError> {
+    let mut args = Vec::new();
+
+    if !strategy.filters.tcp_ports.is_empty() {
+        args.push(format!(
+            "--wf-tcp-out={}",
+            format_port_ranges(&strategy.filters.tcp_ports)
+        ));
+    }
+    if !strategy.filters.udp_ports.is_empty() {
+        args.push(format!(
+            "--wf-udp-out={}",
+            format_port_ranges(&strategy.filters.udp_ports)
+        ));
+    }
+
+    args.push("--lua-init=@lua/zapret-lib.lua".to_owned());
+    args.push("--lua-init=@lua/zapret-antidpi.lua".to_owned());
+
+    if !strategy.filters.tcp_ports.is_empty() {
+        args.push(format!(
+            "--filter-tcp={}",
+            format_port_ranges(&strategy.filters.tcp_ports)
+        ));
+        args.push("--filter-l7=tls,http".to_owned());
+        append_list_filters(strategy, base, &mut args)?;
+
+        for stage in &strategy.desync {
+            match stage {
+                DesyncStage::Fake { repeats } => {
+                    args.push("--payload=tls_client_hello".to_owned());
+                    args.push(format!(
+                        "--lua-desync=fake:blob=fake_default_tls:repeats={repeats}"
+                    ));
+                    args.push("--payload=http_req".to_owned());
+                    args.push(format!(
+                        "--lua-desync=fake:blob=fake_default_http:repeats={repeats}"
+                    ));
+                }
+                DesyncStage::MultiSplit { positions } => {
+                    args.push("--payload=tls_client_hello,http_req".to_owned());
+                    args.push(format!(
+                        "--lua-desync=multisplit:pos={}",
+                        format_positions(positions)
+                    ));
+                }
+                DesyncStage::MultiDisorder { positions } => {
+                    args.push("--payload=tls_client_hello,http_req".to_owned());
+                    args.push(format!(
+                        "--lua-desync=multidisorder:pos={}",
+                        format_positions(positions)
+                    ));
+                }
+                DesyncStage::FakeSplit { position } => {
+                    args.push("--payload=tls_client_hello,http_req".to_owned());
+                    args.push(format!("--lua-desync=fakedsplit:pos={position}"));
+                }
+                DesyncStage::UdpLength { .. } => {}
+                DesyncStage::IpFragment2 => {
+                    return Err(CompileError::UnsupportedStage {
+                        engine: EngineFlavor::Winws,
+                        stage: "ip-fragment-2".to_owned(),
+                    });
+                }
+            }
+        }
+    }
+
+    if !strategy.filters.udp_ports.is_empty() {
+        if strategy.filters.tcp_ports.is_empty() {
+            // no separator required for the first profile
+        } else {
+            args.push("--new".to_owned());
+        }
+
+        args.push(format!(
+            "--filter-udp={}",
+            format_port_ranges(&strategy.filters.udp_ports)
+        ));
+        append_list_filters(strategy, base, &mut args)?;
+
+        for stage in &strategy.desync {
+            match stage {
+                DesyncStage::Fake { repeats } => {
+                    args.push("--payload=quic_initial".to_owned());
+                    args.push(format!(
+                        "--lua-desync=fake:blob=fake_default_quic:repeats={repeats}"
+                    ));
+                }
+                DesyncStage::UdpLength { increment } => {
+                    args.push("--payload=all".to_owned());
+                    args.push(format!("--lua-desync=udplen:increment={increment}"));
+                }
+                DesyncStage::MultiSplit { .. }
+                | DesyncStage::MultiDisorder { .. }
+                | DesyncStage::FakeSplit { .. } => {}
+                DesyncStage::IpFragment2 => {
+                    return Err(CompileError::UnsupportedStage {
+                        engine: EngineFlavor::Winws,
+                        stage: "ip-fragment-2".to_owned(),
+                    });
+                }
+            }
+        }
+    }
+
+    Ok(CompiledStrategy {
+        engine: EngineFlavor::Winws,
+        args,
+    })
+}
+
+fn append_list_filters(
+    strategy: &StrategyDefinition,
+    base: &Path,
+    args: &mut Vec<String>,
+) -> Result<(), CompileError> {
+    for list in &strategy.filters.domain_lists {
+        args.push(format!(
+            "--hostlist={}",
+            resolve_strategy_data_path(base, list)?.display()
+        ));
+    }
+
+    for list in &strategy.filters.ip_lists {
+        args.push(format!(
+            "--ipset={}",
+            resolve_strategy_data_path(base, list)?.display()
+        ));
+    }
+
+    Ok(())
+}
+
+fn format_positions(positions: &[u16]) -> String {
+    let mut positions = positions.to_vec();
+    positions.sort_unstable();
+    positions.dedup();
+    positions
+        .iter()
+        .map(u16::to_string)
+        .collect::<Vec<_>>()
+        .join(",")
 }
 
 fn compile_common_args(
@@ -208,6 +346,10 @@ fn resolve_strategy_data_path(base: &Path, relative: &Path) -> Result<PathBuf, C
 #[derive(Debug)]
 pub enum CompileError {
     UnsupportedEngine(String),
+    UnsupportedStage {
+        engine: EngineFlavor,
+        stage: String,
+    },
     InvalidStrategy(String),
     Io {
         path: PathBuf,
@@ -220,6 +362,9 @@ impl fmt::Display for CompileError {
         match self {
             Self::UnsupportedEngine(engine) => {
                 write!(f, "unsupported engine flavor: {engine}")
+            }
+            Self::UnsupportedStage { engine, stage } => {
+                write!(f, "stage {stage} is not supported by {}", engine.name())
             }
             Self::InvalidStrategy(message) => f.write_str(message),
             Self::Io { path, source } => {
@@ -294,7 +439,7 @@ positions = [2, 1]
     }
 
     #[test]
-    fn winws_adds_windivert_capture_filters() {
+    fn winws_compiles_to_zapret2_lua_profiles() {
         let strategy = StrategyDefinition::parse(STRATEGY).expect("valid strategy");
         let compiled = compile_strategy(
             &strategy,
@@ -305,8 +450,27 @@ positions = [2, 1]
 
         assert_eq!(compiled.args[0], "--wf-tcp-out=80,443");
         assert_eq!(compiled.args[1], "--wf-udp-out=443");
-        assert!(compiled.args.contains(&"--filter-tcp=80,443".to_owned()));
-        assert!(compiled.args.contains(&"--filter-udp=443".to_owned()));
+        assert!(
+            compiled
+                .args
+                .contains(&"--lua-init=@lua/zapret-antidpi.lua".to_owned())
+        );
+        assert!(
+            compiled
+                .args
+                .contains(&"--lua-desync=fake:blob=fake_default_tls:repeats=2".to_owned())
+        );
+        assert!(
+            compiled
+                .args
+                .contains(&"--lua-desync=multisplit:pos=1,2".to_owned())
+        );
+        assert!(
+            compiled
+                .args
+                .contains(&"--lua-desync=fake:blob=fake_default_quic:repeats=2".to_owned())
+        );
+        assert!(!compiled.args.iter().any(|arg| arg.starts_with("--dpi-desync")));
     }
 
     #[test]
