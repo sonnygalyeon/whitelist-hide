@@ -35,6 +35,8 @@ pub struct RuntimeState {
     pub engine_binary: Option<PathBuf>,
     pub owned_interface: Option<String>,
     pub owned_firewall_scope: Option<String>,
+    #[serde(default)]
+    pub pf_token: Option<String>,
     pub previous_tcp_keepinit: Option<u32>,
 }
 
@@ -50,6 +52,7 @@ impl RuntimeState {
             engine_binary: None,
             owned_interface: None,
             owned_firewall_scope: None,
+            pf_token: None,
             previous_tcp_keepinit: None,
         }
     }
@@ -247,6 +250,17 @@ pub fn launch_verified_engine(
     store: &StateStore,
     session_id: &str,
 ) -> Result<EngineLaunchReport, EngineRuntimeError> {
+    launch_verified_engine_with_env(manifest_path, binary_path, args, &[], store, session_id)
+}
+
+pub fn launch_verified_engine_with_env(
+    manifest_path: &Path,
+    binary_path: &Path,
+    args: &[String],
+    env: &[(String, String)],
+    store: &StateStore,
+    session_id: &str,
+) -> Result<EngineLaunchReport, EngineRuntimeError> {
     if let Some(existing) = store.load()? {
         if existing.engine_pid.is_some()
             && matches!(
@@ -293,8 +307,13 @@ pub fn launch_verified_engine(
     state.engine_binary = Some(binary.clone());
     store.save(&state)?;
 
-    let mut child = match Command::new(&binary)
-        .args(args)
+    let mut command = Command::new(&binary);
+    command.args(args);
+    for (key, value) in env {
+        command.env(key, value);
+    }
+
+    let mut child = match command
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null())
@@ -337,6 +356,17 @@ pub fn launch_verified_engine(
         sha256: verification.actual_sha256,
         binary,
     })
+}
+
+
+pub fn recorded_engine_alive(state: &RuntimeState) -> Result<bool, EngineRuntimeError> {
+    let Some(pid) = state.engine_pid else {
+        return Ok(false);
+    };
+    let Some(binary) = &state.engine_binary else {
+        return Ok(false);
+    };
+    process_matches(pid, binary)
 }
 
 pub fn stop_recorded_engine(store: &StateStore) -> Result<bool, EngineRuntimeError> {
