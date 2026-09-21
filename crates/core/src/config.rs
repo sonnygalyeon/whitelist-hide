@@ -20,6 +20,15 @@ pub struct AppConfig {
 pub struct EngineConfig {
     pub manifest: PathBuf,
     pub binary: PathBuf,
+    #[serde(default)]
+    pub dependencies: Vec<EngineDependencyConfig>,
+}
+
+#[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct EngineDependencyConfig {
+    pub manifest: PathBuf,
+    pub binary: PathBuf,
 }
 
 #[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
@@ -30,6 +39,13 @@ pub struct StrategyConfig {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ResolvedEnginePaths {
+    pub manifest: PathBuf,
+    pub binary: PathBuf,
+    pub dependencies: Vec<ResolvedArtifactPaths>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ResolvedArtifactPaths {
     pub manifest: PathBuf,
     pub binary: PathBuf,
 }
@@ -67,6 +83,15 @@ impl AppConfig {
                 "engine.binary must not be empty".to_owned(),
             ));
         }
+        for dependency in &self.engine.dependencies {
+            if dependency.manifest.as_os_str().is_empty()
+                || dependency.binary.as_os_str().is_empty()
+            {
+                return Err(ConfigError::InvalidConfig(
+                    "engine dependency manifest/binary paths must not be empty".to_owned(),
+                ));
+            }
+        }
 
         if !is_safe_identifier(&self.strategy.name) {
             return Err(ConfigError::InvalidConfig(
@@ -84,6 +109,15 @@ impl AppConfig {
         ResolvedEnginePaths {
             manifest: resolve(base, &self.engine.manifest),
             binary: resolve(base, &self.engine.binary),
+            dependencies: self
+                .engine
+                .dependencies
+                .iter()
+                .map(|dependency| ResolvedArtifactPaths {
+                    manifest: resolve(base, &dependency.manifest),
+                    binary: resolve(base, &dependency.binary),
+                })
+                .collect(),
         }
     }
 }
@@ -161,6 +195,7 @@ name = "general-simple-fake"
             engine: EngineConfig {
                 manifest: PathBuf::from("engine.toml"),
                 binary: PathBuf::from("engine"),
+                dependencies: Vec::new(),
             },
             strategy: StrategyConfig {
                 name: "general;rm".to_owned(),
@@ -176,6 +211,7 @@ name = "general-simple-fake"
             engine: EngineConfig {
                 manifest: PathBuf::from("engine.toml"),
                 binary: PathBuf::from("runtime/engine"),
+                dependencies: Vec::new(),
             },
             strategy: StrategyConfig {
                 name: "general".to_owned(),
