@@ -46,10 +46,11 @@ fn main() {
 
     match serde_json::to_string(&response) {
         Ok(json) => println!("{json}"),
-        Err(_) => println!(
-            "{}",
-            r#"{"schema":1,"ok":false,"message":"serialization failed","engine_pid":null}"#
-        ),
+        Err(_) => {
+            let fallback =
+                r#"{"schema":1,"ok":false,"message":"serialization failed","engine_pid":null}"#;
+            println!("{fallback}");
+        }
     }
 
     if !response.ok {
