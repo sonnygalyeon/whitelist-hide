@@ -1,0 +1,24 @@
+name: windivert-provenance
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - ".github/workflows/windivert-provenance.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  provenance:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Download exact upstream release
+        shell: pwsh
+        run: |
+          $url = "https://github.com/basil00/WinDivert/releases/download/v2.2.2/WinDivert-2.2.2-A.zip"
+          Invoke-WebRequest -Uri $url -OutFile WinDivert-2.2.2-A.zip
+          $hash = (Get-FileHash WinDivert-2.2.2-A.zip -Algorithm SHA256).Hash.ToLowerInvariant()
+          Write-Host "===WHITELIST_HIDE_WINDIVERT_SHA256===$hash"
+          if ((Get-Item WinDivert-2.2.2-A.zip).Length -le 0) { throw "empty WinDivert package" }
