@@ -10,7 +10,7 @@ use whitelist_hide_macos::MacOsBackend;
 use whitelist_hide_runtime::StateStore;
 use whitelist_hide_service::{
     ActionPlan, AppService, BackendAction, BackendState, BackendStatus, DiagnosticLevel,
-    PlatformBackend,
+    PlatformBackend, StartRequest, StopRequest,
 };
 use whitelist_hide_windows::WindowsBackend;
 
@@ -71,6 +71,22 @@ fn main() {
         [group, platform, plan, action] if group == "backend" && plan == "plan" => {
             backend_plan(platform, action)
         }
+        [group, platform, action, config, strategy, flag]
+            if group == "backend"
+                && platform == "macos"
+                && action == "start"
+                && flag == "--apply" =>
+        {
+            macos_start_apply(Path::new(config), Path::new(strategy))
+        }
+        [group, platform, action, flag]
+            if group == "backend"
+                && platform == "macos"
+                && action == "stop"
+                && flag == "--apply" =>
+        {
+            macos_stop_apply()
+        }
         [group, platform, action]
             if group == "backend" && platform == "macos" && action == "cleanup" =>
         {
@@ -105,7 +121,7 @@ fn doctor() {
 
     match report.platform {
         Platform::Windows => println!("Windows backend: inspection and guarded plans available"),
-        Platform::MacOS => println!("macOS backend: inspection and scoped pf cleanup available"),
+        Platform::MacOS => println!("macOS backend: managed verified start/stop available"),
         Platform::Linux => println!("Linux backend: inspection and guarded plans available"),
         Platform::Unsupported => println!("backend: unsupported platform"),
     }
@@ -133,6 +149,21 @@ fn status() -> i32 {
             println!(
                 "firewall scope: {}",
                 state.owned_firewall_scope.as_deref().unwrap_or("none")
+            );
+            println!(
+                "engine binary: {}",
+                state
+                    .engine_binary
+                    .as_deref()
+                    .map(|path| path.display().to_string())
+                    .unwrap_or_else(|| "none".to_owned())
+            );
+            println!(
+                "utun unit: {}",
+                state
+                    .utun_unit
+                    .map(|unit| unit.to_string())
+                    .unwrap_or_else(|| "none".to_owned())
             );
             0
         }
@@ -233,6 +264,50 @@ where
         Err(error) => {
             eprintln!("cannot build {label} backend plan: {error}");
             4
+        }
+    }
+}
+
+fn macos_start_apply(config_path: &Path, strategy_path: &Path) -> i32 {
+    let service = AppService::new(MacOsBackend::system());
+    let request = StartRequest {
+        config_path: config_path.to_path_buf(),
+        strategy_path: strategy_path.to_path_buf(),
+        state_path: runtime_state_path(),
+    };
+
+    match service.start(&request) {
+        Ok(result) => {
+            println!("action: {:?}", result.action);
+            println!("changed: {}", result.changed);
+            println!("{}", result.message);
+            0
+        }
+        Err(error) => {
+            eprintln!("start failed: {error}");
+            eprintln!("runtime state: {}", request.state_path.display());
+            5
+        }
+    }
+}
+
+fn macos_stop_apply() -> i32 {
+    let service = AppService::new(MacOsBackend::system());
+    let request = StopRequest {
+        state_path: runtime_state_path(),
+    };
+
+    match service.stop(&request) {
+        Ok(result) => {
+            println!("action: {:?}", result.action);
+            println!("changed: {}", result.changed);
+            println!("{}", result.message);
+            0
+        }
+        Err(error) => {
+            eprintln!("stop failed: {error}");
+            eprintln!("runtime state: {}", request.state_path.display());
+            5
         }
     }
 }
@@ -456,7 +531,7 @@ fn runtime_state_path() -> PathBuf {
 
 fn help() {
     println!(
-        "whitelist-hide {}\n\nUSAGE:\n    whitelist-hide <COMMAND>\n\nCOMMANDS:\n    doctor\n        Read-only platform diagnostics\n\n    status\n        Show state from the runtime ownership journal\n\n    runtime state-path\n        Show the default runtime journal path\n\n    runtime show [PATH]\n        Read and validate a runtime journal\n\n    config-path\n        Show the default configuration path\n\n    config validate [PATH]\n        Validate a TOML configuration without touching the network\n\n    config verify [PATH]\n        Validate configuration and verify its engine artifact\n\n    engine verify <MANIFEST> <BINARY>\n        Verify artifact SHA-256 and platform against its manifest\n\n    strategy validate <PATH>\n        Validate a structured strategy without executing it\n\n    backend <macos|windows|linux> inspect\n        Inspect host prerequisites and current backend state\n\n    backend <macos|windows|linux> plan <start|stop|cleanup>\n        Print a structured action plan without applying it\n\n    backend macos cleanup --apply\n        Flush only the whitelist-hide pf anchor (requires privileges)\n\n    version\n        Show version\n\n    help\n        Show this help",
+        "whitelist-hide {}\n\nUSAGE:\n    whitelist-hide <COMMAND>\n\nCOMMANDS:\n    doctor\n        Read-only platform diagnostics\n\n    status\n        Show state from the runtime ownership journal\n\n    runtime state-path\n        Show the default runtime journal path\n\n    runtime show [PATH]\n        Read and validate a runtime journal\n\n    config-path\n        Show the default configuration path\n\n    config validate [PATH]\n        Validate a TOML configuration without touching the network\n\n    config verify [PATH]\n        Validate configuration and verify its engine artifact\n\n    engine verify <MANIFEST> <BINARY>\n        Verify artifact SHA-256 and platform against its manifest\n\n    strategy validate <PATH>\n        Validate a structured strategy without executing it\n\n    backend <macos|windows|linux> inspect\n        Inspect host prerequisites and current backend state\n\n    backend <macos|windows|linux> plan <start|stop|cleanup>\n        Print a structured action plan without applying it\n\n    backend macos start <CONFIG> <STRATEGY> --apply\n        Start a verified managed macOS session (requires privileges)\n\n    backend macos stop --apply\n        Stop the owned macOS session and release its resources\n\n    backend macos cleanup --apply\n        Flush only the whitelist-hide pf anchor (requires privileges)\n\n    version\n        Show version\n\n    help\n        Show this help",
         env!("CARGO_PKG_VERSION")
     );
 }
