@@ -133,3 +133,68 @@ jobs:
           name: source-built-linux-nfqws
           path: dist/linux/
           if-no-files-found: error
+
+
+  windows-winws:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Read pinned Windows upstream
+        id: upstream
+        shell: pwsh
+        run: python scripts/upstream_lock.py windows --github-output "$env:GITHUB_OUTPUT"
+
+      - name: Fetch exact upstream commit
+        shell: pwsh
+        env:
+          REPOSITORY: ${{ steps.upstream.outputs.repository }}
+          COMMIT: ${{ steps.upstream.outputs.commit }}
+          LICENSE_PATH: ${{ steps.upstream.outputs.license_path }}
+        run: |
+          git init upstream
+          git -C upstream remote add origin $env:REPOSITORY
+          git -C upstream fetch --depth 1 origin $env:COMMIT
+          if ((git -C upstream rev-parse FETCH_HEAD).Trim() -ne $env:COMMIT) { throw "commit mismatch" }
+          git -C upstream checkout --detach $env:COMMIT
+          if ((git -C upstream rev-parse HEAD).Trim() -ne $env:COMMIT) { throw "checkout mismatch" }
+          if (-not (Test-Path "upstream/$env:LICENSE_PATH")) { throw "license file missing" }
+
+      - name: Set up Cygwin toolchain
+        uses: cygwin/cygwin-install-action@v4
+        with:
+          platform: x86_64
+          packages: >-
+            gcc-core
+            make
+            zlib-devel
+
+      - name: Build winws from source
+        shell: C:\cygwin\bin\bash.exe -eo pipefail '{0}'
+        env:
+          COMMIT: ${{ steps.upstream.outputs.commit }}
+          SUBDIR: ${{ steps.upstream.outputs.subdir }}
+          ARTIFACT: ${{ steps.upstream.outputs.artifact }}
+          BUILD_TARGET: ${{ steps.upstream.outputs.build_target }}
+          LICENSE_NAME: ${{ steps.upstream.outputs.license }}
+        run: |
+          set -euo pipefail
+          cd upstream
+          export CFLAGS="-DZAPRET_GH_VER=whitelist-hide -DZAPRET_GH_HASH=$COMMIT"
+          make -C "$SUBDIR" "$BUILD_TARGET"
+          test -f "$SUBDIR/$ARTIFACT"
+          mkdir -p ../dist/windows
+          cp "$SUBDIR/$ARTIFACT" "../dist/windows/$ARTIFACT"
+          sha256sum "../dist/windows/$ARTIFACT" | tee ../dist/windows/SHA256SUMS
+          {
+            echo "source_commit=$COMMIT"
+            echo "license=$LICENSE_NAME"
+            echo "builder=github-actions/windows-latest+cygwin"
+          } > ../dist/windows/PROVENANCE.txt
+
+      - name: Upload source-built Windows engine
+        uses: actions/upload-artifact@v4
+        with:
+          name: source-built-windows-winws
+          path: dist/windows/
+          if-no-files-found: error

@@ -93,15 +93,10 @@ pub fn compile_strategy(
             .join(",");
         args.push(format!("--dpi-desync={modes}"));
 
-        if let Some(repeats) = strategy
-            .desync
-            .iter()
-            .filter_map(|stage| match stage {
-                DesyncStage::Fake { repeats } => Some(*repeats),
-                _ => None,
-            })
-            .max()
-        {
+        if let Some(repeats) = strategy.desync.iter().filter_map(|stage| match stage {
+            DesyncStage::Fake { repeats } => Some(*repeats),
+            _ => None,
+        }).max() {
             args.push(format!("--dpi-desync-repeats={repeats}"));
         }
 
@@ -232,7 +227,11 @@ positions = [1, 2]
                 .args
                 .contains(&"--dpi-desync=fake,multisplit".to_owned())
         );
-        assert!(compiled.args.contains(&"--dpi-desync-repeats=6".to_owned()));
+        assert!(
+            compiled
+                .args
+                .contains(&"--dpi-desync-repeats=6".to_owned())
+        );
     }
 
     #[test]
@@ -244,9 +243,6 @@ positions = [1, 2]
             EngineFlavor::Nfqws,
         )
         .expect("compile");
-        assert_eq!(
-            compiled.args.first().map(String::as_str),
-            Some("--qnum=200")
-        );
+        assert_eq!(compiled.args.first().map(String::as_str), Some("--qnum=200"));
     }
 }
