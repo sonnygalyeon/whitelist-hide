@@ -13,8 +13,8 @@ use whitelist_hide_service::{
 };
 
 use crate::{
-    CommandRunner, MacOsBackend, MacOsError, PF_ANCHOR, SystemCommandRunner,
-    nonempty_trimmed, parse_pf_status, parse_utun_interfaces, route_value,
+    CommandRunner, MacOsBackend, MacOsError, PF_ANCHOR, SystemCommandRunner, parse_pf_status,
+    parse_utun_interfaces, route_value,
 };
 
 const UTUN_UNIT_START: u32 = 201;
@@ -28,11 +28,7 @@ impl ManagedPlatformBackend for MacOsBackend<SystemCommandRunner> {
         self.require_root()?;
 
         let store = StateStore::new(&request.state_path);
-        if store
-            .load()
-            .map_err(runtime_error)?
-            .is_some()
-        {
+        if store.load().map_err(runtime_error)?.is_some() {
             return Err(MacOsError::Lifecycle(
                 "runtime state already exists; stop or recover the existing session first"
                     .to_owned(),
@@ -147,14 +143,7 @@ impl ManagedPlatformBackend for MacOsBackend<SystemCommandRunner> {
             return Err(runtime_error(error));
         }
 
-        let result = self.finish_start(
-            request,
-            &strategy,
-            &store,
-            &mut state,
-            &mut child,
-            &utun_name,
-        );
+        let result = self.finish_start(&strategy, &store, &mut state, &mut child, &utun_name);
 
         if let Err(error) = result {
             self.rollback_start(&store, &mut state, &mut child);
@@ -233,7 +222,6 @@ impl ManagedPlatformBackend for MacOsBackend<SystemCommandRunner> {
 impl MacOsBackend<SystemCommandRunner> {
     fn finish_start(
         &self,
-        _request: &StartRequest,
         strategy: &StrategyDefinition,
         store: &StateStore,
         state: &mut RuntimeState,
@@ -260,13 +248,7 @@ impl MacOsBackend<SystemCommandRunner> {
             .to_ascii_lowercase();
 
         if pf_status.starts_with("disabled") {
-            let enabled = self.run_checked("/sbin/pfctl", &["-E"])?;
-            let token = parse_pf_token(&enabled).ok_or_else(|| {
-                MacOsError::Lifecycle(
-                    "pf was disabled, enabled successfully, but no pf token was returned"
-                        .to_owned(),
-                )
-            })?;
+            let token = self.enable_pf()?;
             state.pf_enable_token = Some(token);
             store.save(state).map_err(runtime_error)?;
         }
@@ -307,12 +289,7 @@ impl MacOsBackend<SystemCommandRunner> {
         Ok(())
     }
 
-    fn rollback_start(
-        &self,
-        store: &StateStore,
-        state: &mut RuntimeState,
-        child: &mut Child,
-    ) {
+    fn rollback_start(&self, store: &StateStore, state: &mut RuntimeState, child: &mut Child) {
         state.phase = RuntimePhase::Failed;
         let _ = store.save(state);
 
@@ -358,6 +335,27 @@ impl MacOsBackend<SystemCommandRunner> {
         }
     }
 
+    fn enable_pf(&self) -> Result<String, MacOsError> {
+        let args = ["-E"];
+        let output = self.runner.run("/sbin/pfctl", &args)?;
+        if !output.success() {
+            return Err(MacOsError::CommandFailed {
+                program: "/sbin/pfctl".to_owned(),
+                args: vec!["-E".to_owned()],
+                code: output.code,
+                stderr: output.stderr.trim().to_owned(),
+            });
+        }
+
+        let combined = format!("{}\n{}", output.stdout, output.stderr);
+        parse_pf_token(&combined).ok_or_else(|| {
+            MacOsError::Lifecycle(
+                "pf was enabled but pfctl returned no release token; refusing to continue"
+                    .to_owned(),
+            )
+        })
+    }
+
     fn gateway_mac(&self, gateway: &str) -> Result<String, MacOsError> {
         let output = self.run_checked("/usr/sbin/arp", &["-n", gateway])?;
         parse_arp_mac(&output).ok_or_else(|| {
@@ -393,10 +391,9 @@ impl MacOsBackend<SystemCommandRunner> {
         };
 
         let pid_text = pid.to_string();
-        let ps = self.runner.run(
-            "/bin/ps",
-            &["-p", pid_text.as_str(), "-o", "command="],
-        )?;
+        let ps = self
+            .runner
+            .run("/bin/ps", &["-p", pid_text.as_str(), "-o", "command="])?;
         if !ps.success() || ps.stdout.trim().is_empty() {
             return Ok(());
         }
@@ -411,19 +408,17 @@ impl MacOsBackend<SystemCommandRunner> {
         self.run_checked("/bin/kill", &["-TERM", pid_text.as_str()])?;
         for _ in 0..30 {
             thread::sleep(Duration::from_millis(100));
-            let check = self.runner.run(
-                "/bin/ps",
-                &["-p", pid_text.as_str(), "-o", "command="],
-            )?;
+            let check = self
+                .runner
+                .run("/bin/ps", &["-p", pid_text.as_str(), "-o", "command="])?;
             if !check.success() || check.stdout.trim().is_empty() {
                 return Ok(());
             }
         }
 
-        let check = self.runner.run(
-            "/bin/ps",
-            &["-p", pid_text.as_str(), "-o", "command="],
-        )?;
+        let check = self
+            .runner
+            .run("/bin/ps", &["-p", pid_text.as_str(), "-o", "command="])?;
         if check.success() && check.stdout.contains(expected.as_ref()) {
             self.run_checked("/bin/kill", &["-KILL", pid_text.as_str()])?;
         }
@@ -435,7 +430,9 @@ fn validate_strategy_files(
     strategy: &StrategyDefinition,
     strategy_path: &std::path::Path,
 ) -> Result<(), MacOsError> {
-    let base = strategy_path.parent().unwrap_or_else(|| std::path::Path::new("."));
+    let base = strategy_path
+        .parent()
+        .unwrap_or_else(|| std::path::Path::new("."));
     for relative in strategy
         .filters
         .domain_lists
@@ -558,13 +555,8 @@ fn safe_pf_token(token: &str) -> bool {
             .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.' | b':'))
 }
 
-fn build_pf_rules(
-    strategy: &StrategyDefinition,
-    utun_name: &str,
-) -> Result<String, MacOsError> {
-    if !utun_name.starts_with("utun")
-        || !utun_name[4..].bytes().all(|byte| byte.is_ascii_digit())
-    {
+fn build_pf_rules(strategy: &StrategyDefinition, utun_name: &str) -> Result<String, MacOsError> {
+    if !utun_name.starts_with("utun") || !utun_name[4..].bytes().all(|byte| byte.is_ascii_digit()) {
         return Err(MacOsError::Lifecycle(
             "refusing to build pf rules for an invalid utun name".to_owned(),
         ));
@@ -604,10 +596,7 @@ mod tests {
     #[test]
     fn parses_gateway_mac_from_arp() {
         let line = "? (192.168.1.1) at aa:bb:cc:dd:ee:ff on en0 ifscope [ethernet]\n";
-        assert_eq!(
-            parse_arp_mac(line),
-            Some("aa:bb:cc:dd:ee:ff".to_owned())
-        );
+        assert_eq!(parse_arp_mac(line), Some("aa:bb:cc:dd:ee:ff".to_owned()));
     }
 
     #[test]
