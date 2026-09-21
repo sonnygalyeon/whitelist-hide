@@ -1,7 +1,8 @@
-use serde::{Deserialize, Serialize};
 //! Platform-neutral control-plane types for whitelist-hide.
 //!
 //! The core crate intentionally performs no privileged network modification.
+
+use serde::{Deserialize, Serialize};
 
 pub mod artifact;
 pub mod config;
