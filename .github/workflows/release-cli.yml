@@ -3,8 +3,15 @@ name: release-cli
 on:
   workflow_dispatch:
   push:
+    branches:
+      - "feature/final-release-candidate"
     tags:
       - "v*"
+    paths:
+      - ".github/workflows/release-cli.yml"
+      - "Cargo.lock"
+      - "Cargo.toml"
+      - "crates/**"
 
 permissions:
   contents: read
