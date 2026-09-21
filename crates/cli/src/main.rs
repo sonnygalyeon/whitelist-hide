@@ -7,7 +7,7 @@ use whitelist_hide_core::strategy::StrategyDefinition;
 use whitelist_hide_core::{DoctorReport, Platform};
 use whitelist_hide_linux::LinuxBackend;
 use whitelist_hide_macos::MacOsBackend;
-use whitelist_hide_runtime::StateStore;
+use whitelist_hide_runtime::{StateStore, launch_verified_engine, stop_recorded_engine};
 use whitelist_hide_service::{
     ActionPlan, AppService, BackendAction, BackendState, BackendStatus, DiagnosticLevel,
     PlatformBackend,
@@ -62,6 +62,12 @@ fn main() {
         [group, action, manifest, binary] if group == "engine" && action == "verify" => {
             engine_verify(Path::new(manifest), Path::new(binary))
         }
+        [group, action, manifest, binary, args @ ..]
+            if group == "engine" && action == "launch" =>
+        {
+            engine_launch(Path::new(manifest), Path::new(binary), args)
+        }
+        [group, action] if group == "engine" && action == "stop" => engine_stop(),
         [group, action, path] if group == "strategy" && action == "validate" => {
             strategy_validate(Path::new(path))
         }
@@ -353,6 +359,50 @@ fn config_verify(path: &Path) -> i32 {
     verify_paths(&resolved.manifest, &resolved.binary)
 }
 
+
+fn engine_launch(manifest_path: &Path, binary_path: &Path, args: &[String]) -> i32 {
+    let store = StateStore::new(runtime_state_path());
+    let session_id = format!("cli-{}", std::process::id());
+
+    match launch_verified_engine(manifest_path, binary_path, args, &store, &session_id) {
+        Ok(report) => {
+            println!("engine: {} {}", report.engine_name, report.engine_version);
+            println!("pid: {}", report.pid);
+            println!("session: {}", report.session_id);
+            println!("sha256: {}", report.sha256);
+            println!("binary: {}", report.binary.display());
+            println!("runtime state: {}", store.path().display());
+            0
+        }
+        Err(error) => {
+            eprintln!("engine launch: REJECTED");
+            eprintln!("reason: {error}");
+            5
+        }
+    }
+}
+
+fn engine_stop() -> i32 {
+    let store = StateStore::new(runtime_state_path());
+
+    match stop_recorded_engine(&store) {
+        Ok(true) => {
+            println!("engine: stopped");
+            println!("runtime state: cleared");
+            0
+        }
+        Ok(false) => {
+            println!("engine: not running");
+            0
+        }
+        Err(error) => {
+            eprintln!("engine stop: REFUSED");
+            eprintln!("reason: {error}");
+            5
+        }
+    }
+}
+
 fn engine_verify(manifest_path: &Path, binary_path: &Path) -> i32 {
     verify_paths(manifest_path, binary_path)
 }
@@ -456,7 +506,7 @@ fn runtime_state_path() -> PathBuf {
 
 fn help() {
     println!(
-        "whitelist-hide {}\n\nUSAGE:\n    whitelist-hide <COMMAND>\n\nCOMMANDS:\n    doctor\n        Read-only platform diagnostics\n\n    status\n        Show state from the runtime ownership journal\n\n    runtime state-path\n        Show the default runtime journal path\n\n    runtime show [PATH]\n        Read and validate a runtime journal\n\n    config-path\n        Show the default configuration path\n\n    config validate [PATH]\n        Validate a TOML configuration without touching the network\n\n    config verify [PATH]\n        Validate configuration and verify its engine artifact\n\n    engine verify <MANIFEST> <BINARY>\n        Verify artifact SHA-256 and platform against its manifest\n\n    strategy validate <PATH>\n        Validate a structured strategy without executing it\n\n    backend <macos|windows|linux> inspect\n        Inspect host prerequisites and current backend state\n\n    backend <macos|windows|linux> plan <start|stop|cleanup>\n        Print a structured action plan without applying it\n\n    backend macos cleanup --apply\n        Flush only the whitelist-hide pf anchor (requires privileges)\n\n    version\n        Show version\n\n    help\n        Show this help",
+        "whitelist-hide {}\n\nUSAGE:\n    whitelist-hide <COMMAND>\n\nCOMMANDS:\n    doctor\n        Read-only platform diagnostics\n\n    status\n        Show state from the runtime ownership journal\n\n    runtime state-path\n        Show the default runtime journal path\n\n    runtime show [PATH]\n        Read and validate a runtime journal\n\n    config-path\n        Show the default configuration path\n\n    config validate [PATH]\n        Validate a TOML configuration without touching the network\n\n    config verify [PATH]\n        Validate configuration and verify its engine artifact\n\n    engine verify <MANIFEST> <BINARY>\n        Verify artifact SHA-256 and platform against its manifest\n\n    engine launch <MANIFEST> <BINARY> [ARGS...]\n        Launch only a verified engine and record its owned PID\n\n    engine stop\n        Stop only the engine process whose identity matches the runtime journal\n\n    strategy validate <PATH>\n        Validate a structured strategy without executing it\n\n    backend <macos|windows|linux> inspect\n        Inspect host prerequisites and current backend state\n\n    backend <macos|windows|linux> plan <start|stop|cleanup>\n        Print a structured action plan without applying it\n\n    backend macos cleanup --apply\n        Flush only the whitelist-hide pf anchor (requires privileges)\n\n    version\n        Show version\n\n    help\n        Show this help",
         env!("CARGO_PKG_VERSION")
     );
 }
