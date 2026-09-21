@@ -2,6 +2,9 @@
 //!
 //! The core crate intentionally performs no privileged network modification.
 
+pub mod artifact;
+pub mod config;
+
 use std::fmt;
 
 /// Operating systems supported by the project architecture.
