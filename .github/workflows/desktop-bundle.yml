@@ -3,11 +3,10 @@ name: desktop-bundle
 on:
   workflow_dispatch:
   push:
+    branches:
+      - "feature/final-release-candidate"
     paths:
       - ".github/workflows/desktop-bundle.yml"
-  push:
-    tags:
-      - "v*"
 
 permissions:
   contents: read
