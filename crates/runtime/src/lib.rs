@@ -258,14 +258,7 @@ pub fn launch_verified_engine(
     store: &StateStore,
     session_id: &str,
 ) -> Result<EngineLaunchReport, EngineRuntimeError> {
-    launch_verified_engine_with_env(
-        manifest_path,
-        binary_path,
-        args,
-        &[],
-        store,
-        session_id,
-    )
+    launch_verified_engine_with_env(manifest_path, binary_path, args, &[], store, session_id)
 }
 
 pub fn launch_verified_engine_with_env(
