@@ -1,5 +1,6 @@
 use std::error::Error;
 use std::fmt;
+use std::fs;
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
@@ -7,10 +8,15 @@ use std::thread;
 use std::time::Duration;
 
 use whitelist_hide_core::Platform;
+use whitelist_hide_core::artifact::{
+    ArtifactError, ArtifactManifest, verify_companions, verify_file,
+};
 use whitelist_hide_core::compiler::{
     CompiledStrategy, compile_strategy, target_for_current_platform,
 };
-use whitelist_hide_core::config::AppConfig;
+use whitelist_hide_core::config::{
+    AppConfig, EngineConfig, StrategyConfig,
+};
 use whitelist_hide_core::strategy::{PortRange, StrategyDefinition, StrategyError};
 use whitelist_hide_runtime::{
     EngineRuntimeError, RuntimePhase, RuntimeState, RuntimeStateError, StateStore,
@@ -23,6 +29,20 @@ pub const MACOS_UTUN_UNIT: u16 = 51;
 pub const MACOS_UTUN_INTERFACE: &str = "utun50";
 pub const MACOS_PF_ANCHOR: &str = "com.apple/whitelist-hide";
 pub const LINUX_NFT_TABLE: &str = "whitelist_hide";
+pub const DEFAULT_STRATEGY: &str = "general-simple-fake";
+
+const MACOS_ENGINE_SHA256: &str =
+    "bbf125e40feedbf5cbb5e7b93c62f5647f1da6d6ecb646206c661b7788b4344c";
+const LINUX_ENGINE_SHA256: &str =
+    "b83836cd66db3470d6d2a1c14ecea2576925e14ab873d2686318125d505ecb30";
+const WINDOWS_ENGINE_SHA256: &str =
+    "c80191fa814aafea7e6ef9b7d72e21603c0f7e668b5c066f78ef0f8eea7e083c";
+const CYGWIN1_SHA256: &str =
+    "d66788fce4ef1ce787fc1a83f2dd1e063e58bbf0d48ad93164ee195a983c035e";
+const WINDIVERT_DLL_SHA256: &str =
+    "c1e060ee19444a259b2162f8af0f3fe8c4428a1c6f694dce20de194ac8d7d9a2";
+const WINDIVERT_SYS_SHA256: &str =
+    "8da085332782708d8767bcace5327a6ec7283c17cfb85e40b03cd2323a90ddc2";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SessionReport {
@@ -78,17 +98,20 @@ pub fn default_config_path() -> PathBuf {
     }
 }
 
-pub fn system_config_path() -> PathBuf {
+pub fn system_data_dir() -> PathBuf {
     match Platform::detect() {
         Platform::Windows => std::env::var_os("PROGRAMDATA")
             .map(PathBuf::from)
             .unwrap_or_else(|| PathBuf::from(r"C:\ProgramData"))
-            .join("whitelist-hide")
-            .join("config.toml"),
-        Platform::MacOS => PathBuf::from("/Library/Application Support/whitelist-hide/config.toml"),
-        Platform::Linux => PathBuf::from("/etc/whitelist-hide/config.toml"),
-        Platform::Unsupported => PathBuf::from("config.toml"),
+            .join("whitelist-hide"),
+        Platform::MacOS => PathBuf::from("/Library/Application Support/whitelist-hide"),
+        Platform::Linux => PathBuf::from("/var/lib/whitelist-hide"),
+        Platform::Unsupported => PathBuf::from("whitelist-hide"),
     }
+}
+
+pub fn system_config_path() -> PathBuf {
+    system_data_dir().join("config.toml")
 }
 
 pub fn runtime_state_path() -> PathBuf {
@@ -103,6 +126,395 @@ pub fn runtime_state_path() -> PathBuf {
         Platform::Unsupported => PathBuf::from("runtime-state.json"),
     }
 }
+
+
+pub fn install_bundle(bundle_dir: &Path) -> Result<PathBuf, ControllerError> {
+    ensure_privileges()?;
+
+    let store = StateStore::new(runtime_state_path());
+    if let Some(state) = store.load()? {
+        if recorded_engine_alive(&state)? {
+            return Err(ControllerError::State(
+                "stop the active session before installing runtime assets".to_owned(),
+            ));
+        }
+    }
+
+    let source = bundle_dir
+        .canonicalize()
+        .map_err(|source| ControllerError::Io {
+            path: bundle_dir.to_path_buf(),
+            source,
+        })?;
+    let manifest_path = source.join("engine.toml");
+    let manifest = ArtifactManifest::load(&manifest_path)?;
+    validate_trusted_manifest(&manifest)?;
+
+    let binary = source.join("runtime").join(&manifest.artifact.filename);
+    let primary = verify_file(&manifest, &binary)?;
+    if !primary.trusted() {
+        return Err(ControllerError::State(format!(
+            "bundled engine failed trust verification: expected {}, got {}",
+            primary.expected_sha256, primary.actual_sha256
+        )));
+    }
+    for report in verify_companions(&manifest, &binary)? {
+        if !report.trusted() {
+            return Err(ControllerError::State(format!(
+                "bundled companion {} failed trust verification",
+                report.name
+            )));
+        }
+    }
+
+    let strategies = source.join("strategies");
+    validate_strategy_bundle(&strategies)?;
+    if !strategies.join(format!("{DEFAULT_STRATEGY}.toml")).is_file() {
+        return Err(ControllerError::State(format!(
+            "runtime bundle is missing default strategy {DEFAULT_STRATEGY}"
+        )));
+    }
+
+    let target = system_data_dir();
+    let parent = target.parent().ok_or_else(|| {
+        ControllerError::State("system data directory has no parent".to_owned())
+    })?;
+    fs::create_dir_all(parent).map_err(|source| ControllerError::Io {
+        path: parent.to_path_buf(),
+        source,
+    })?;
+
+    let stage = parent.join(format!(
+        ".whitelist-hide-stage-{}",
+        std::process::id()
+    ));
+    let backup = parent.join(format!(
+        ".whitelist-hide-backup-{}",
+        std::process::id()
+    ));
+    remove_dir_if_present(&stage)?;
+    remove_dir_if_present(&backup)?;
+    fs::create_dir_all(stage.join("runtime")).map_err(|source| ControllerError::Io {
+        path: stage.clone(),
+        source,
+    })?;
+
+    copy_regular_file(&manifest_path, &stage.join("engine.toml"), false)?;
+    copy_regular_file(
+        &binary,
+        &stage.join("runtime").join(&manifest.artifact.filename),
+        true,
+    )?;
+    for companion in &manifest.companions {
+        copy_regular_file(
+            &source.join("runtime").join(&companion.filename),
+            &stage.join("runtime").join(&companion.filename),
+            companion.filename.ends_with(".exe"),
+        )?;
+    }
+    copy_tree_regular(&strategies, &stage.join("strategies"))?;
+
+    let config = AppConfig {
+        schema: 1,
+        engine: EngineConfig {
+            manifest: PathBuf::from("engine.toml"),
+            binary: PathBuf::from("runtime").join(&manifest.artifact.filename),
+        },
+        strategy: StrategyConfig {
+            name: DEFAULT_STRATEGY.to_owned(),
+            directory: PathBuf::from("strategies"),
+        },
+    };
+    config.save(&stage.join("config.toml"))?;
+
+    if target.exists() {
+        fs::rename(&target, &backup).map_err(|source| ControllerError::Io {
+            path: target.clone(),
+            source,
+        })?;
+    }
+
+    if let Err(source) = fs::rename(&stage, &target) {
+        if backup.exists() {
+            let _ = fs::rename(&backup, &target);
+        }
+        return Err(ControllerError::Io {
+            path: target.clone(),
+            source,
+        });
+    }
+
+    remove_dir_if_present(&backup)?;
+    Ok(target.join("config.toml"))
+}
+
+pub fn available_strategies() -> Result<Vec<String>, ControllerError> {
+    let directory = system_data_dir().join("strategies");
+    let mut result = Vec::new();
+    let entries = fs::read_dir(&directory).map_err(|source| ControllerError::Io {
+        path: directory.clone(),
+        source,
+    })?;
+
+    for entry in entries {
+        let entry = entry.map_err(|source| ControllerError::Io {
+            path: directory.clone(),
+            source,
+        })?;
+        let path = entry.path();
+        if path.extension().and_then(|value| value.to_str()) != Some("toml") {
+            continue;
+        }
+        let strategy = StrategyDefinition::load(&path)?;
+        result.push(strategy.id);
+    }
+    result.sort();
+    result.dedup();
+    Ok(result)
+}
+
+pub fn select_strategy(id: &str) -> Result<(), ControllerError> {
+    ensure_privileges()?;
+    if !safe_identifier(id) {
+        return Err(ControllerError::State(
+            "strategy id contains unsupported characters".to_owned(),
+        ));
+    }
+
+    let store = StateStore::new(runtime_state_path());
+    if let Some(state) = store.load()? {
+        if recorded_engine_alive(&state)? {
+            return Err(ControllerError::State(
+                "stop the active session before changing strategy".to_owned(),
+            ));
+        }
+    }
+
+    let path = system_data_dir()
+        .join("strategies")
+        .join(format!("{id}.toml"));
+    let strategy = StrategyDefinition::load(&path)?;
+    if strategy.id != id {
+        return Err(ControllerError::State(
+            "strategy filename and embedded id do not match".to_owned(),
+        ));
+    }
+    let target =
+        target_for_current_platform(NFQUEUE_NUM).ok_or(ControllerError::UnsupportedPlatform)?;
+    compile_strategy(&strategy, &path, target)?;
+
+    let config_path = system_config_path();
+    let mut config = AppConfig::load(&config_path)?;
+    config.strategy.name = id.to_owned();
+    config.save(&config_path)?;
+    Ok(())
+}
+
+fn validate_trusted_manifest(manifest: &ArtifactManifest) -> Result<(), ControllerError> {
+    let expected = match Platform::detect() {
+        Platform::MacOS => (
+            "utunws",
+            MACOS_ENGINE_SHA256,
+            Vec::<(&str, &str)>::new(),
+        ),
+        Platform::Linux => (
+            "nfqws",
+            LINUX_ENGINE_SHA256,
+            Vec::<(&str, &str)>::new(),
+        ),
+        Platform::Windows => (
+            "winws.exe",
+            WINDOWS_ENGINE_SHA256,
+            vec![
+                ("cygwin1.dll", CYGWIN1_SHA256),
+                ("WinDivert.dll", WINDIVERT_DLL_SHA256),
+                ("WinDivert64.sys", WINDIVERT_SYS_SHA256),
+            ],
+        ),
+        Platform::Unsupported => return Err(ControllerError::UnsupportedPlatform),
+    };
+
+    if manifest.artifact.filename != expected.0
+        || !manifest.artifact.sha256.eq_ignore_ascii_case(expected.1)
+    {
+        return Err(ControllerError::State(
+            "runtime manifest does not match the engine pinned in this release".to_owned(),
+        ));
+    }
+
+    if manifest.companions.len() != expected.2.len() {
+        return Err(ControllerError::State(
+            "runtime manifest companion set does not match this release".to_owned(),
+        ));
+    }
+
+    for (filename, sha256) in expected.2 {
+        let Some(spec) = manifest
+            .companions
+            .iter()
+            .find(|spec| spec.filename.eq_ignore_ascii_case(filename))
+        else {
+            return Err(ControllerError::State(format!(
+                "runtime manifest is missing trusted companion {filename}"
+            )));
+        };
+        if !spec.sha256.eq_ignore_ascii_case(sha256) {
+            return Err(ControllerError::State(format!(
+                "runtime manifest hash mismatch for {filename}"
+            )));
+        }
+    }
+
+    Ok(())
+}
+
+fn validate_strategy_bundle(directory: &Path) -> Result<(), ControllerError> {
+    let entries = fs::read_dir(directory).map_err(|source| ControllerError::Io {
+        path: directory.to_path_buf(),
+        source,
+    })?;
+    let target =
+        target_for_current_platform(NFQUEUE_NUM).ok_or(ControllerError::UnsupportedPlatform)?;
+    let mut count = 0_usize;
+
+    for entry in entries {
+        let entry = entry.map_err(|source| ControllerError::Io {
+            path: directory.to_path_buf(),
+            source,
+        })?;
+        let path = entry.path();
+        let metadata = fs::symlink_metadata(&path).map_err(|source| ControllerError::Io {
+            path: path.clone(),
+            source,
+        })?;
+        if metadata.file_type().is_symlink() {
+            return Err(ControllerError::State(format!(
+                "runtime bundle contains a symlink: {}",
+                path.display()
+            )));
+        }
+        if path.extension().and_then(|value| value.to_str()) != Some("toml") {
+            continue;
+        }
+        let strategy = StrategyDefinition::load(&path)?;
+        compile_strategy(&strategy, &path, target)?;
+        count += 1;
+    }
+
+    if count == 0 {
+        return Err(ControllerError::State(
+            "runtime bundle contains no strategies".to_owned(),
+        ));
+    }
+    Ok(())
+}
+
+fn copy_tree_regular(source: &Path, target: &Path) -> Result<(), ControllerError> {
+    let metadata = fs::symlink_metadata(source).map_err(|source_error| ControllerError::Io {
+        path: source.to_path_buf(),
+        source: source_error,
+    })?;
+    if metadata.file_type().is_symlink() || !metadata.is_dir() {
+        return Err(ControllerError::State(format!(
+            "expected a regular directory: {}",
+            source.display()
+        )));
+    }
+    fs::create_dir_all(target).map_err(|source_error| ControllerError::Io {
+        path: target.to_path_buf(),
+        source: source_error,
+    })?;
+
+    for entry in fs::read_dir(source).map_err(|source_error| ControllerError::Io {
+        path: source.to_path_buf(),
+        source: source_error,
+    })? {
+        let entry = entry.map_err(|source_error| ControllerError::Io {
+            path: source.to_path_buf(),
+            source: source_error,
+        })?;
+        let from = entry.path();
+        let to = target.join(entry.file_name());
+        let metadata = fs::symlink_metadata(&from).map_err(|source_error| ControllerError::Io {
+            path: from.clone(),
+            source: source_error,
+        })?;
+        if metadata.file_type().is_symlink() {
+            return Err(ControllerError::State(format!(
+                "runtime bundle contains a symlink: {}",
+                from.display()
+            )));
+        }
+        if metadata.is_dir() {
+            copy_tree_regular(&from, &to)?;
+        } else if metadata.is_file() {
+            copy_regular_file(&from, &to, false)?;
+        } else {
+            return Err(ControllerError::State(format!(
+                "runtime bundle contains a non-regular entry: {}",
+                from.display()
+            )));
+        }
+    }
+    Ok(())
+}
+
+fn copy_regular_file(source: &Path, target: &Path, executable: bool) -> Result<(), ControllerError> {
+    let metadata = fs::symlink_metadata(source).map_err(|source_error| ControllerError::Io {
+        path: source.to_path_buf(),
+        source: source_error,
+    })?;
+    if metadata.file_type().is_symlink() || !metadata.is_file() {
+        return Err(ControllerError::State(format!(
+            "expected a regular file: {}",
+            source.display()
+        )));
+    }
+    if let Some(parent) = target.parent() {
+        fs::create_dir_all(parent).map_err(|source_error| ControllerError::Io {
+            path: parent.to_path_buf(),
+            source: source_error,
+        })?;
+    }
+    fs::copy(source, target).map_err(|source_error| ControllerError::Io {
+        path: target.to_path_buf(),
+        source: source_error,
+    })?;
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mode = if executable { 0o755 } else { 0o644 };
+        fs::set_permissions(target, fs::Permissions::from_mode(mode)).map_err(
+            |source_error| ControllerError::Io {
+                path: target.to_path_buf(),
+                source: source_error,
+            },
+        )?;
+    }
+
+    let _ = executable;
+    Ok(())
+}
+
+fn remove_dir_if_present(path: &Path) -> Result<(), ControllerError> {
+    match fs::remove_dir_all(path) {
+        Ok(()) => Ok(()),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(()),
+        Err(source) => Err(ControllerError::Io {
+            path: path.to_path_buf(),
+            source,
+        }),
+    }
+}
+
+fn safe_identifier(value: &str) -> bool {
+    !value.is_empty()
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.'))
+}
+
 
 pub fn start(config_path: &Path) -> Result<SessionReport, ControllerError> {
     let prepared = prepare(config_path)?;
@@ -765,6 +1177,7 @@ pub enum ControllerError {
     Strategy(StrategyError),
     Runtime(EngineRuntimeError),
     RuntimeState(RuntimeStateError),
+    Artifact(ArtifactError),
     State(String),
     Command { program: String, detail: String },
     Io { path: PathBuf, source: io::Error },
@@ -781,6 +1194,7 @@ impl fmt::Display for ControllerError {
             Self::Strategy(error) => write!(f, "{error}"),
             Self::Runtime(error) => write!(f, "{error}"),
             Self::RuntimeState(error) => write!(f, "{error}"),
+            Self::Artifact(error) => write!(f, "{error}"),
             Self::State(message) => f.write_str(message),
             Self::Command { program, detail } => write!(f, "{program} failed: {detail}"),
             Self::Io { path, source } => write!(f, "{}: {source}", path.display()),
@@ -795,6 +1209,7 @@ impl Error for ControllerError {
             Self::Strategy(error) => Some(error),
             Self::Runtime(error) => Some(error),
             Self::RuntimeState(error) => Some(error),
+            Self::Artifact(error) => Some(error),
             Self::Io { source, .. } => Some(source),
             _ => None,
         }
@@ -877,5 +1292,11 @@ mod tests {
             },
             desync: Vec::new(),
         }
+    }
+}
+
+impl From<ArtifactError> for ControllerError {
+    fn from(value: ArtifactError) -> Self {
+        Self::Artifact(value)
     }
 }
