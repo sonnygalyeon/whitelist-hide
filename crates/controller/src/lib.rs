@@ -7,7 +7,9 @@ use whitelist_hide_core::artifact::{ArtifactManifest, verify_file};
 use whitelist_hide_core::config::AppConfig;
 use whitelist_hide_core::strategy::StrategyDefinition;
 use whitelist_hide_core::strategy_compile::{EngineFlavor, compile_strategy};
-use whitelist_hide_linux::{NFQUEUE_NUM, install_nfqueue_rules, owned_table_exists, remove_owned_table};
+use whitelist_hide_linux::{
+    NFQUEUE_NUM, install_nfqueue_rules, owned_table_exists, remove_owned_table,
+};
 use whitelist_hide_macos::{
     PF_ANCHOR, UTUN_INTERFACE, clear_owned_pf_anchor, configure_owned_utun, enable_pf_if_needed,
     inspect_network_snapshot, install_pf_routes, release_pf_token, wait_for_owned_utun,
@@ -116,9 +118,9 @@ impl SessionController {
             .state
             .load()?
             .ok_or_else(|| ControllerError::Rollback("runtime state disappeared".to_owned()))?;
-        let pid = state
-            .engine_pid
-            .ok_or_else(|| ControllerError::Rollback("engine pid missing after start".to_owned()))?;
+        let pid = state.engine_pid.ok_or_else(|| {
+            ControllerError::Rollback("engine pid missing after start".to_owned())
+        })?;
 
         let health = self.health()?;
         if !health.running {
@@ -250,10 +252,9 @@ impl SessionController {
             wait_for_owned_utun(100)?;
             configure_owned_utun()?;
             let token = enable_pf_if_needed(snapshot.pf_was_enabled)?;
-            if let Err(error) = install_pf_routes(
-                &strategy.filters.tcp_ports,
-                &strategy.filters.udp_ports,
-            ) {
+            if let Err(error) =
+                install_pf_routes(&strategy.filters.tcp_ports, &strategy.filters.udp_ports)
+            {
                 if let Some(token) = token.as_deref() {
                     let _ = release_pf_token(token);
                 }
@@ -263,11 +264,9 @@ impl SessionController {
         })();
 
         match result {
-            Ok(token) => self.patch_owned_state(
-                Some(UTUN_INTERFACE),
-                Some(PF_ANCHOR),
-                token.as_deref(),
-            ),
+            Ok(token) => {
+                self.patch_owned_state(Some(UTUN_INTERFACE), Some(PF_ANCHOR), token.as_deref())
+            }
             Err(error) => {
                 let _ = clear_owned_pf_anchor();
                 let _ = stop_recorded_engine(&self.state);
@@ -362,7 +361,9 @@ pub enum ControllerError {
 impl fmt::Display for ControllerError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::ActiveState => f.write_str("runtime state already exists; refusing a second start"),
+            Self::ActiveState => {
+                f.write_str("runtime state already exists; refusing a second start")
+            }
             Self::UnsupportedPlatform => f.write_str("unsupported platform"),
             Self::Configuration(message) => write!(f, "configuration error: {message}"),
             Self::Strategy(message) => write!(f, "strategy error: {message}"),
@@ -372,7 +373,10 @@ impl fmt::Display for ControllerError {
             Self::Linux(error) => write!(f, "Linux backend error: {error}"),
             Self::MacOs(error) => write!(f, "macOS backend error: {error}"),
             Self::StatePlatformMismatch { recorded, actual } => {
-                write!(f, "runtime state belongs to {recorded}, current platform is {actual}")
+                write!(
+                    f,
+                    "runtime state belongs to {recorded}, current platform is {actual}"
+                )
             }
             Self::HealthCheck(message) => write!(f, "health check failed: {message}"),
             Self::Rollback(message) => write!(f, "rollback error: {message}"),
