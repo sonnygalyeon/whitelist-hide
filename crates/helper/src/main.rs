@@ -1,4 +1,8 @@
-use whitelist_hide_controller::{start, status, stop, system_config_path};
+use std::path::Path;
+
+use whitelist_hide_controller::{
+    install_bundle, select_strategy, start, status, stop, system_config_path,
+};
 
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
@@ -11,20 +15,14 @@ fn main() {
                 );
                 0
             }
-            Err(error) => {
-                eprintln!("start failed: {error}");
-                5
-            }
+            Err(error) => fail("start", &error.to_string()),
         },
         [command] if command == "stop" => match stop() {
             Ok(changed) => {
                 println!("stopped changed={changed}");
                 0
             }
-            Err(error) => {
-                eprintln!("stop failed: {error}");
-                5
-            }
+            Err(error) => fail("stop", &error.to_string()),
         },
         [command] if command == "status" => match status() {
             Ok(state) => {
@@ -42,16 +40,34 @@ fn main() {
                 );
                 if state.healthy { 0 } else { 6 }
             }
-            Err(error) => {
-                eprintln!("status failed: {error}");
-                5
+            Err(error) => fail("status", &error.to_string()),
+        },
+        [command, bundle] if command == "install" => match install_bundle(Path::new(bundle)) {
+            Ok(config) => {
+                println!("installed config={}", config.display());
+                0
             }
+            Err(error) => fail("install", &error.to_string()),
+        },
+        [command, strategy] if command == "select" => match select_strategy(strategy) {
+            Ok(()) => {
+                println!("selected strategy={strategy}");
+                0
+            }
+            Err(error) => fail("select", &error.to_string()),
         },
         _ => {
-            eprintln!("usage: whitelist-hide-helper <start|stop|status>");
+            eprintln!(
+                "usage: whitelist-hide-helper <start|stop|status|install PATH|select ID>"
+            );
             2
         }
     };
 
     std::process::exit(code);
+}
+
+fn fail(action: &str, detail: &str) -> i32 {
+    eprintln!("{action} failed: {detail}");
+    5
 }
