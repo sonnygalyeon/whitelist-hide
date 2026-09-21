@@ -99,7 +99,8 @@ pub struct VerificationReport {
 impl VerificationReport {
     #[must_use]
     pub fn integrity_ok(&self) -> bool {
-        self.expected_sha256.eq_ignore_ascii_case(&self.actual_sha256)
+        self.expected_sha256
+            .eq_ignore_ascii_case(&self.actual_sha256)
     }
 
     #[must_use]
