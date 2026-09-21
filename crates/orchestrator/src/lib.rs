@@ -108,7 +108,6 @@ fn verify_dependencies(
     Ok(())
 }
 
-
 fn require_windows_dependencies(
     dependencies: &[whitelist_hide_core::config::ResolvedArtifactPaths],
 ) -> Result<(), SessionError> {
