@@ -4,7 +4,8 @@ on:
   workflow_dispatch:
   push:
     branches:
-      - feature/release-candidate
+      - main
+      - feature/desktop-zero-config
     tags:
       - "v*"
 
@@ -23,10 +24,13 @@ jobs:
         include:
           - os: ubuntu-24.04
             name: linux
+            upstream: linux
           - os: macos-latest
             name: macos
+            upstream: macos
           - os: windows-latest
             name: windows
+            upstream: windows
     runs-on: ${{ matrix.os }}
 
     steps:
@@ -36,11 +40,14 @@ jobs:
         with:
           node-version: 22
 
-      - name: Install Linux Tauri dependencies
+      - name: Install Linux build dependencies
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
-          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
+          sudo apt-get install -y --no-install-recommends \
+            libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf \
+            build-essential zlib1g-dev libnetfilter-queue-dev libnfnetlink-dev \
+            libmnl-dev libcap-dev
 
       - name: Install frontend dependencies
         working-directory: apps/desktop
@@ -49,6 +56,198 @@ jobs:
       - name: Generate platform icons
         working-directory: apps/desktop
         run: npx tauri icon app-icon.svg
+
+      - name: Read pinned engine upstream
+        id: upstream
+        shell: bash
+        if: runner.os != 'Windows'
+        run: python3 scripts/upstream_lock.py ${{ matrix.upstream }} --github-output "$GITHUB_OUTPUT"
+
+      - name: Read pinned Windows engine upstream
+        id: upstream_windows
+        shell: pwsh
+        if: runner.os == 'Windows'
+        run: python scripts/upstream_lock.py windows --github-output "$env:GITHUB_OUTPUT"
+
+      - name: Fetch exact engine source on Unix
+        if: runner.os != 'Windows'
+        shell: bash
+        env:
+          REPOSITORY: ${{ steps.upstream.outputs.repository }}
+          COMMIT: ${{ steps.upstream.outputs.commit }}
+          LICENSE_PATH: ${{ steps.upstream.outputs.license_path }}
+        run: |
+          set -euo pipefail
+          git init engine-upstream
+          git -C engine-upstream remote add origin "$REPOSITORY"
+          git -C engine-upstream fetch --depth 1 origin "$COMMIT"
+          test "$(git -C engine-upstream rev-parse FETCH_HEAD)" = "$COMMIT"
+          git -C engine-upstream checkout --detach "$COMMIT"
+          test "$(git -C engine-upstream rev-parse HEAD)" = "$COMMIT"
+          test -f "engine-upstream/$LICENSE_PATH"
+
+      - name: Fetch exact engine source on Windows
+        if: runner.os == 'Windows'
+        shell: pwsh
+        env:
+          REPOSITORY: ${{ steps.upstream_windows.outputs.repository }}
+          COMMIT: ${{ steps.upstream_windows.outputs.commit }}
+          LICENSE_PATH: ${{ steps.upstream_windows.outputs.license_path }}
+        run: |
+          git init engine-upstream
+          git -C engine-upstream remote add origin "$env:REPOSITORY"
+          git -C engine-upstream fetch --depth 1 origin "$env:COMMIT"
+          if ((git -C engine-upstream rev-parse FETCH_HEAD) -ne "$env:COMMIT") { throw "unexpected FETCH_HEAD" }
+          git -C engine-upstream checkout --detach "$env:COMMIT"
+          if ((git -C engine-upstream rev-parse HEAD) -ne "$env:COMMIT") { throw "unexpected HEAD" }
+          if (-not (Test-Path "engine-upstream/$env:LICENSE_PATH")) { throw "license file missing" }
+
+      - name: Build Linux nfqws
+        if: runner.os == 'Linux'
+        shell: bash
+        env:
+          SUBDIR: ${{ steps.upstream.outputs.subdir }}
+          ARTIFACT: ${{ steps.upstream.outputs.artifact }}
+        run: |
+          set -euo pipefail
+          make -C "engine-upstream/$SUBDIR"
+          test -x "engine-upstream/$SUBDIR/$ARTIFACT"
+
+      - name: Build macOS utunws
+        if: runner.os == 'macOS'
+        shell: bash
+        env:
+          SUBDIR: ${{ steps.upstream.outputs.subdir }}
+          ARTIFACT: ${{ steps.upstream.outputs.artifact }}
+          BUILD_TARGET: ${{ steps.upstream.outputs.build_target }}
+        run: |
+          set -euo pipefail
+          export SDKROOT="$(xcrun --sdk macosx --show-sdk-path)"
+          make -C "engine-upstream/$SUBDIR" "$BUILD_TARGET"
+          test -x "engine-upstream/$SUBDIR/$ARTIFACT"
+
+      - name: Set up Cygwin
+        if: runner.os == 'Windows'
+        uses: cygwin/cygwin-install-action@v4
+        with:
+          platform: x86_64
+          site: http://ctm.crouchingtigerhiddenfruitbat.org/pub/cygwin/circa/64bit/2024/01/30/231215
+          check-sig: 'false'
+          packages: >-
+            gcc-core
+            make
+            zlib-devel
+            wget
+
+      - name: Build static LuaJIT
+        if: runner.os == 'Windows'
+        env:
+          LUAJIT_RELEASE: 2.1-20250826
+          MINSIZE: -Os -flto=auto -ffunction-sections -fdata-sections
+          LDMINSIZE: -Wl,--gc-sections -flto=auto
+        shell: C:\cygwin\bin\bash.exe -eo pipefail '{0}'
+        run: >-
+          export MAKEFLAGS=-j$(nproc) &&
+          wget -q https://github.com/openresty/luajit2/archive/refs/tags/v${LUAJIT_RELEASE}.tar.gz &&
+          tar -xzf v${LUAJIT_RELEASE}.tar.gz &&
+          rm -f v${LUAJIT_RELEASE}.tar.gz &&
+          make -C luajit2-${LUAJIT_RELEASE} BUILDMODE=static XCFLAGS="-DLUAJIT_USE_SYSMALLOC -DLUAJIT_DISABLE_FFI -ffat-lto-objects" TARGET_CFLAGS="$MINSIZE" TARGET_LDFLAGS="$LDMINSIZE" &&
+          make -C luajit2-${LUAJIT_RELEASE} install
+
+      - name: Build Windows winws2
+        if: runner.os == 'Windows'
+        shell: C:\cygwin\bin\bash.exe -eo pipefail '{0}'
+        env:
+          COMMIT: ${{ steps.upstream_windows.outputs.commit }}
+          SUBDIR: ${{ steps.upstream_windows.outputs.subdir }}
+          BUILD_TARGET: ${{ steps.upstream_windows.outputs.build_target }}
+          ARTIFACT: ${{ steps.upstream_windows.outputs.artifact }}
+        run: >-
+          export MAKEFLAGS=-j$(nproc) &&
+          export CFLAGS="-DZAPRET_GH_HASH=$COMMIT" &&
+          make -C "engine-upstream/$SUBDIR" "$BUILD_TARGET" &&
+          test -f "engine-upstream/$SUBDIR/$ARTIFACT"
+
+      - name: Read pinned WinDivert release
+        if: runner.os == 'Windows'
+        id: windivert
+        shell: pwsh
+        run: python scripts/windivert_lock.py --github-output "$env:GITHUB_OUTPUT"
+
+      - name: Fetch and verify WinDivert
+        if: runner.os == 'Windows'
+        shell: pwsh
+        env:
+          ASSET_URL: ${{ steps.windivert.outputs.asset_url }}
+          EXPECTED_SHA256: ${{ steps.windivert.outputs.sha256 }}
+          WINDIVERT_VERSION: ${{ steps.windivert.outputs.version }}
+        run: |
+          Invoke-WebRequest -Uri "$env:ASSET_URL" -OutFile WinDivert.zip
+          $actual = (Get-FileHash WinDivert.zip -Algorithm SHA256).Hash.ToLowerInvariant()
+          if ($actual -ne "$env:EXPECTED_SHA256") {
+            throw "WinDivert SHA-256 mismatch: expected $env:EXPECTED_SHA256, got $actual"
+          }
+          Expand-Archive WinDivert.zip -DestinationPath WinDivert
+          $root = "WinDivert/WinDivert-$env:WINDIVERT_VERSION-A"
+          Copy-Item "$root/x64/WinDivert.dll" WinDivert.dll
+          Copy-Item "$root/x64/WinDivert64.sys" WinDivert64.sys
+
+      - name: Prepare built-in Linux runtime
+        if: runner.os == 'Linux'
+        shell: bash
+        env:
+          REPOSITORY: ${{ steps.upstream.outputs.repository }}
+          COMMIT: ${{ steps.upstream.outputs.commit }}
+          SUBDIR: ${{ steps.upstream.outputs.subdir }}
+          ARTIFACT: ${{ steps.upstream.outputs.artifact }}
+          LICENSE_NAME: ${{ steps.upstream.outputs.license }}
+        run: |
+          set -euo pipefail
+          arch="$(uname -m)"
+          case "$arch" in
+            x86_64) target="linux-x86_64" ;;
+            aarch64|arm64) target="linux-aarch64" ;;
+            *) echo "unsupported Linux arch: $arch" >&2; exit 2 ;;
+          esac
+          python3 scripts/prepare_desktop_runtime.py --platform "$target" --resource-root apps/desktop/src-tauri/resources/default --engine "engine-upstream/$SUBDIR/$ARTIFACT" --engine-name nfqws --engine-version "$COMMIT" --engine-source "$REPOSITORY@$COMMIT" --engine-license "$LICENSE_NAME"
+
+      - name: Prepare built-in macOS runtime
+        if: runner.os == 'macOS'
+        shell: bash
+        env:
+          REPOSITORY: ${{ steps.upstream.outputs.repository }}
+          COMMIT: ${{ steps.upstream.outputs.commit }}
+          SUBDIR: ${{ steps.upstream.outputs.subdir }}
+          ARTIFACT: ${{ steps.upstream.outputs.artifact }}
+          LICENSE_NAME: ${{ steps.upstream.outputs.license }}
+        run: |
+          set -euo pipefail
+          arch="$(uname -m)"
+          case "$arch" in
+            x86_64) target="macos-x86_64" ;;
+            arm64|aarch64) target="macos-aarch64" ;;
+            *) echo "unsupported macOS arch: $arch" >&2; exit 2 ;;
+          esac
+          python3 scripts/prepare_desktop_runtime.py --platform "$target" --resource-root apps/desktop/src-tauri/resources/default --engine "engine-upstream/$SUBDIR/$ARTIFACT" --engine-name utunws --engine-version "$COMMIT" --engine-source "$REPOSITORY@$COMMIT" --engine-license "$LICENSE_NAME"
+
+      - name: Prepare built-in Windows runtime
+        if: runner.os == 'Windows'
+        shell: pwsh
+        env:
+          REPOSITORY: ${{ steps.upstream_windows.outputs.repository }}
+          COMMIT: ${{ steps.upstream_windows.outputs.commit }}
+          SUBDIR: ${{ steps.upstream_windows.outputs.subdir }}
+          ARTIFACT: ${{ steps.upstream_windows.outputs.artifact }}
+          LICENSE_NAME: ${{ steps.upstream_windows.outputs.license }}
+          WINDIVERT_REPOSITORY: ${{ steps.windivert.outputs.repository }}
+          WINDIVERT_COMMIT: ${{ steps.windivert.outputs.commit }}
+          WINDIVERT_VERSION: ${{ steps.windivert.outputs.version }}
+          WINDIVERT_LICENSE: ${{ steps.windivert.outputs.license }}
+        run: |
+          python scripts/prepare_desktop_runtime.py --platform windows-x86_64 --resource-root apps/desktop/src-tauri/resources/default --engine "engine-upstream/$env:SUBDIR/$env:ARTIFACT" --engine-name winws2 --engine-version "$env:COMMIT" --engine-source "$env:REPOSITORY@$env:COMMIT" --engine-license "$env:LICENSE_NAME" --dependency "C:\cygwin\bin\cygwin1.dll::cygwin-runtime::https://cygwin.com/::LGPL-3.0-or-later::runner" --dependency "WinDivert.dll::WinDivert.dll::$env:WINDIVERT_REPOSITORY@$env:WINDIVERT_COMMIT::$env:WINDIVERT_LICENSE::$env:WINDIVERT_VERSION" --dependency "WinDivert64.sys::WinDivert64.sys::$env:WINDIVERT_REPOSITORY@$env:WINDIVERT_COMMIT::$env:WINDIVERT_LICENSE::$env:WINDIVERT_VERSION" --dependency "engine-upstream/lua/zapret-lib.lua::zapret-lib.lua::$env:REPOSITORY@$env:COMMIT::MIT::$env:COMMIT" --dependency "engine-upstream/lua/zapret-antidpi.lua::zapret-antidpi.lua::$env:REPOSITORY@$env:COMMIT::MIT::$env:COMMIT"
+
+      - name: Validate generated built-in config
+        run: cargo run --locked -p whitelist-hide-cli -- config validate apps/desktop/src-tauri/resources/default/config.toml
 
       - name: Build privileged helper
         run: cargo build --release --locked -p whitelist-hide-helper
