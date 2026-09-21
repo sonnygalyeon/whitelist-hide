@@ -54,6 +54,23 @@ jobs:
           Copy-Item $env:BINARY dist/whitelist-hide.exe
           $hash = (Get-FileHash dist/whitelist-hide.exe -Algorithm SHA256).Hash.ToLowerInvariant()
           "$hash  whitelist-hide.exe" | Set-Content -Encoding ascii dist/SHA256SUMS
+      - name: Record build provenance
+        shell: bash
+        if: runner.os != 'Windows'
+        run: |
+          {
+            echo "source_commit=${GITHUB_SHA}"
+            echo "rustc=$(rustc --version)"
+            echo "target=$(rustc -vV | sed -n 's/^host: //p')"
+          } > dist/PROVENANCE.txt
+      - name: Record Windows build provenance
+        shell: pwsh
+        if: runner.os == 'Windows'
+        run: |
+          "source_commit=$env:GITHUB_SHA" | Set-Content -Encoding ascii dist/PROVENANCE.txt
+          "rustc=$(rustc --version)" | Add-Content -Encoding ascii dist/PROVENANCE.txt
+          $hostLine = (rustc -vV | Select-String '^host: ').Line
+          "target=$($hostLine.Substring(6))" | Add-Content -Encoding ascii dist/PROVENANCE.txt
       - name: Upload package
         uses: actions/upload-artifact@v4
         with:
