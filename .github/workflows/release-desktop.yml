@@ -41,13 +41,13 @@ jobs:
 
       - name: Read pinned Unix upstream
         if: runner.os != 'Windows'
-        id: upstream-unix
+        id: upstream_unix
         shell: bash
         run: python3 scripts/upstream_lock.py "${{ matrix.name }}" --github-output "$GITHUB_OUTPUT"
 
       - name: Read pinned Windows upstream
         if: runner.os == 'Windows'
-        id: upstream-windows
+        id: upstream_windows
         shell: pwsh
         run: python scripts/upstream_lock.py windows --github-output "$env:GITHUB_OUTPUT"
 
@@ -55,9 +55,9 @@ jobs:
         if: runner.os != 'Windows'
         shell: bash
         env:
-          REPOSITORY: ${{ steps.upstream-unix.outputs.repository }}
-          COMMIT: ${{ steps.upstream-unix.outputs.commit }}
-          LICENSE_PATH: ${{ steps.upstream-unix.outputs.license_path }}
+          REPOSITORY: ${{ steps.upstream_unix.outputs.repository }}
+          COMMIT: ${{ steps.upstream_unix.outputs.commit }}
+          LICENSE_PATH: ${{ steps.upstream_unix.outputs.license_path }}
         run: |
           set -euo pipefail
           git init upstream
@@ -72,9 +72,9 @@ jobs:
         if: runner.os == 'Windows'
         shell: pwsh
         env:
-          REPOSITORY: ${{ steps.upstream-windows.outputs.repository }}
-          COMMIT: ${{ steps.upstream-windows.outputs.commit }}
-          LICENSE_PATH: ${{ steps.upstream-windows.outputs.license_path }}
+          REPOSITORY: ${{ steps.upstream_windows.outputs.repository }}
+          COMMIT: ${{ steps.upstream_windows.outputs.commit }}
+          LICENSE_PATH: ${{ steps.upstream_windows.outputs.license_path }}
         run: |
           git init upstream
           git -C upstream remote add origin "$env:REPOSITORY"
@@ -94,10 +94,10 @@ jobs:
         if: runner.os == 'Linux'
         shell: bash
         env:
-          COMMIT: ${{ steps.upstream-unix.outputs.commit }}
-          SUBDIR: ${{ steps.upstream-unix.outputs.subdir }}
-          ARTIFACT: ${{ steps.upstream-unix.outputs.artifact }}
-          LICENSE_NAME: ${{ steps.upstream-unix.outputs.license }}
+          COMMIT: ${{ steps.upstream_unix.outputs.commit }}
+          SUBDIR: ${{ steps.upstream_unix.outputs.subdir }}
+          ARTIFACT: ${{ steps.upstream_unix.outputs.artifact }}
+          LICENSE_NAME: ${{ steps.upstream_unix.outputs.license }}
         run: |
           set -euo pipefail
           make -C "upstream/$SUBDIR"
@@ -116,11 +116,11 @@ jobs:
         if: runner.os == 'macOS'
         shell: bash
         env:
-          COMMIT: ${{ steps.upstream-unix.outputs.commit }}
-          SUBDIR: ${{ steps.upstream-unix.outputs.subdir }}
-          ARTIFACT: ${{ steps.upstream-unix.outputs.artifact }}
-          BUILD_TARGET: ${{ steps.upstream-unix.outputs.build_target }}
-          LICENSE_NAME: ${{ steps.upstream-unix.outputs.license }}
+          COMMIT: ${{ steps.upstream_unix.outputs.commit }}
+          SUBDIR: ${{ steps.upstream_unix.outputs.subdir }}
+          ARTIFACT: ${{ steps.upstream_unix.outputs.artifact }}
+          BUILD_TARGET: ${{ steps.upstream_unix.outputs.build_target }}
+          LICENSE_NAME: ${{ steps.upstream_unix.outputs.license }}
         run: |
           set -euo pipefail
           export SDKROOT="$(xcrun --sdk macosx --show-sdk-path)"
@@ -167,11 +167,11 @@ jobs:
         if: runner.os == 'Windows'
         shell: C:\cygwin\bin\bash.exe -eo pipefail '{0}'
         env:
-          COMMIT: ${{ steps.upstream-windows.outputs.commit }}
-          SUBDIR: ${{ steps.upstream-windows.outputs.subdir }}
-          BUILD_TARGET: ${{ steps.upstream-windows.outputs.build_target }}
-          ARTIFACT: ${{ steps.upstream-windows.outputs.artifact }}
-          LICENSE_NAME: ${{ steps.upstream-windows.outputs.license }}
+          COMMIT: ${{ steps.upstream_windows.outputs.commit }}
+          SUBDIR: ${{ steps.upstream_windows.outputs.subdir }}
+          BUILD_TARGET: ${{ steps.upstream_windows.outputs.build_target }}
+          ARTIFACT: ${{ steps.upstream_windows.outputs.artifact }}
+          LICENSE_NAME: ${{ steps.upstream_windows.outputs.license }}
         run: >-
           export MAKEFLAGS=-j$(nproc) &&
           export CFLAGS="-DZAPRET_GH_HASH=$COMMIT" &&
