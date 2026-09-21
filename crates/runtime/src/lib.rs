@@ -230,7 +230,6 @@ impl Error for RuntimeStateError {
     }
 }
 
-
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct EngineLaunchReport {
     pub pid: u32,
@@ -313,13 +312,10 @@ pub fn launch_verified_engine(
     };
 
     thread::sleep(Duration::from_millis(150));
-    if let Some(status) = child
-        .try_wait()
-        .map_err(|source| EngineRuntimeError::Io {
-            path: binary.clone(),
-            source,
-        })?
-    {
+    if let Some(status) = child.try_wait().map_err(|source| EngineRuntimeError::Io {
+        path: binary.clone(),
+        source,
+    })? {
         state.phase = RuntimePhase::Failed;
         let _ = store.save(&state);
         return Err(EngineRuntimeError::ExitedEarly(status.code()));
@@ -375,7 +371,9 @@ fn process_matches(pid: u32, expected: &Path) -> Result<bool, EngineRuntimeError
     match fs::read_link(&proc_exe) {
         Ok(actual) => {
             let actual = actual.canonicalize().unwrap_or(actual);
-            let expected = expected.canonicalize().unwrap_or_else(|_| expected.to_path_buf());
+            let expected = expected
+                .canonicalize()
+                .unwrap_or_else(|_| expected.to_path_buf());
             Ok(actual == expected)
         }
         Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(false),
@@ -531,7 +529,10 @@ impl fmt::Display for EngineRuntimeError {
                 write!(f, "engine path has no valid filename: {}", path.display())
             }
             Self::FilenameMismatch { expected, actual } => {
-                write!(f, "engine filename mismatch: expected {expected}, got {actual}")
+                write!(
+                    f,
+                    "engine filename mismatch: expected {expected}, got {actual}"
+                )
             }
             Self::UntrustedArtifact {
                 expected_sha256,
@@ -543,7 +544,10 @@ impl fmt::Display for EngineRuntimeError {
                 "engine rejected: expected sha256={expected_sha256} platform={expected_platform}; actual sha256={actual_sha256} platform={actual_platform}"
             ),
             Self::ExitedEarly(code) => {
-                write!(f, "engine exited before runtime ownership was established: {code:?}")
+                write!(
+                    f,
+                    "engine exited before runtime ownership was established: {code:?}"
+                )
             }
             Self::MissingEngineIdentity => {
                 f.write_str("runtime state has a PID but no recorded engine binary identity")
