@@ -44,7 +44,6 @@ pub struct SessionStatus {
 
 struct PreparedSession {
     config: AppConfig,
-    strategy_path: PathBuf,
     strategy: StrategyDefinition,
     compiled: CompiledStrategy,
     manifest: PathBuf,
@@ -135,7 +134,7 @@ pub fn status() -> Result<SessionStatus, ControllerError> {
         running: alive,
         healthy,
         engine_pid: state.engine_pid,
-        strategy: Some(state.session_id.clone()),
+        strategy: state.strategy_id.clone(),
         detail: if healthy {
             "engine and owned packet path are healthy".to_owned()
         } else if !alive {
@@ -184,7 +183,6 @@ fn prepare(config_path: &Path) -> Result<PreparedSession, ControllerError> {
 
     Ok(PreparedSession {
         config,
-        strategy_path,
         strategy,
         compiled,
         manifest: engine.manifest,
@@ -211,6 +209,7 @@ fn start_linux(
         ControllerError::State("runtime journal disappeared after launch".to_owned())
     })?;
     state.owned_firewall_scope = Some(format!("inet:{LINUX_NFT_TABLE}"));
+    state.strategy_id = Some(prepared.config.strategy.name.clone());
     store.save(&state)?;
 
     Ok(SessionReport {
@@ -235,6 +234,12 @@ fn start_windows(
         store,
         session_id,
     )?;
+
+    let mut state = store.load()?.ok_or_else(|| {
+        ControllerError::State("runtime journal disappeared after launch".to_owned())
+    })?;
+    state.strategy_id = Some(prepared.config.strategy.name.clone());
+    store.save(&state)?;
 
     Ok(SessionReport {
         platform: Platform::Windows,
@@ -295,11 +300,12 @@ fn start_macos(
         ],
     )?;
 
-    let mut state = store
-        .load()?
-        .ok_or_else(|| ControllerError::State("runtime journal disappeared after launch".to_owned()))?;
+    let mut state = store.load()?.ok_or_else(|| {
+        ControllerError::State("runtime journal disappeared after launch".to_owned())
+    })?;
     state.owned_interface = Some(MACOS_UTUN_INTERFACE.to_owned());
     state.owned_firewall_scope = Some(MACOS_PF_ANCHOR.to_owned());
+    state.strategy_id = Some(prepared.config.strategy.name.clone());
 
     let pf_info = command_text("/sbin/pfctl", &["-s", "info"])?;
     if pf_info
