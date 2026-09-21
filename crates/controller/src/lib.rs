@@ -13,7 +13,8 @@ use whitelist_hide_linux::{
 };
 use whitelist_hide_macos::{
     PF_ANCHOR, UTUN_INTERFACE, clear_owned_pf_anchor, configure_owned_utun, enable_pf_if_needed,
-    inspect_network_snapshot, install_pf_routes, release_pf_token, wait_for_owned_utun,
+    inspect_network_snapshot, install_pf_routes, owned_pf_anchor_has_rules, release_pf_token,
+    wait_for_owned_utun,
 };
 use whitelist_hide_runtime::{
     EngineLaunchOptions, EngineRuntimeError, RuntimePhase, StateStore,
@@ -167,23 +168,28 @@ impl SessionController {
             });
         }
 
+        let engine_alive = recorded_engine_alive(&self.state)?;
+
         match platform {
             Platform::Linux => {
                 let _ = remove_owned_table()?;
-                stop_recorded_engine(&self.state)?;
             }
             Platform::MacOS => {
                 clear_owned_pf_anchor()?;
                 if let Some(token) = state.owned_firewall_token.as_deref() {
                     release_pf_token(token)?;
                 }
-                stop_recorded_engine(&self.state)?;
             }
-            Platform::Windows => {
-                stop_recorded_engine(&self.state)?;
-            }
+            Platform::Windows => {}
             Platform::Unsupported => return Err(ControllerError::UnsupportedPlatform),
         }
+
+        if engine_alive {
+            stop_recorded_engine(&self.state)?;
+        } else {
+            self.state.clear()?;
+        }
+
         Ok(true)
     }
 
@@ -199,10 +205,13 @@ impl SessionController {
         let engine_alive = recorded_engine_alive(&self.state)?;
         let network = match Platform::detect() {
             Platform::Linux => owned_table_exists()?,
-            Platform::MacOS => std::process::Command::new("/sbin/ifconfig")
-                .arg(UTUN_INTERFACE)
-                .output()
-                .is_ok_and(|output| output.status.success()),
+            Platform::MacOS => {
+                let utun = std::process::Command::new("/sbin/ifconfig")
+                    .arg(UTUN_INTERFACE)
+                    .output()
+                    .is_ok_and(|output| output.status.success());
+                utun && owned_pf_anchor_has_rules().unwrap_or(false)
+            },
             Platform::Windows => windivert_service_running().unwrap_or(false),
             Platform::Unsupported => false,
         };
