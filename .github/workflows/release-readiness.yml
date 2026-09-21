@@ -78,5 +78,5 @@ jobs:
           $target = (rustc -vV | Select-String '^host: ').Line.Substring(6)
           New-Item -ItemType Directory -Force apps/desktop/src-tauri/binaries | Out-Null
           Copy-Item target/release/whitelist-hide-helper.exe "apps/desktop/src-tauri/binaries/whitelist-hide-helper-$target.exe"
-      - name: Check Tauri Rust application
-        run: cargo check --manifest-path apps/desktop/src-tauri/Cargo.toml
+      - name: Check locked Tauri Rust application
+        run: cargo check --manifest-path apps/desktop/src-tauri/Cargo.toml --locked
