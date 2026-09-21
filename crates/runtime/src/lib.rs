@@ -327,6 +327,9 @@ pub fn launch_verified_engine_with_options(
     validate_environment(&options.env)?;
 
     let mut command = Command::new(&binary);
+    if let Some(directory) = binary.parent() {
+        command.current_dir(directory);
+    }
     command
         .args(&options.args)
         .stdin(Stdio::null())
