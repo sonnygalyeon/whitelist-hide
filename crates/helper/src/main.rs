@@ -1,5 +1,8 @@
 use std::env;
 use std::path::Path;
+use std::process::{Command, Stdio};
+use std::thread;
+use std::time::Duration;
 
 use whitelist_hide_controller::{SessionController, default_state_path};
 
@@ -13,7 +16,17 @@ fn main() {
                 Ok(report) => {
                     println!("running");
                     println!("pid={}", report.engine_pid);
-                    0
+                    match spawn_watchdog() {
+                        Ok(pid) => {
+                            println!("watchdog_pid={pid}");
+                            0
+                        }
+                        Err(error) => {
+                            eprintln!("failed to start watchdog: {error}");
+                            let _ = controller.stop();
+                            5
+                        }
+                    }
                 }
                 Err(error) => {
                     eprintln!("{error}");
@@ -28,6 +41,7 @@ fn main() {
                 5
             }
         },
+        [command] if command == "watchdog" => watchdog(&controller),
         [command] if command == "health" => match controller.health() {
             Ok(report) => {
                 println!("running={}", report.running);
@@ -52,4 +66,33 @@ fn main() {
     };
 
     std::process::exit(code);
+}
+
+
+fn spawn_watchdog() -> Result<u32, std::io::Error> {
+    let executable = env::current_exe()?;
+    let child = Command::new(executable)
+        .arg("watchdog")
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()?;
+    Ok(child.id())
+}
+
+fn watchdog(controller: &SessionController) -> i32 {
+    loop {
+        match controller.health() {
+            Ok(report) if report.running => thread::sleep(Duration::from_secs(2)),
+            Ok(report) if !report.engine_alive && !report.owned_network_resource_present => return 0,
+            Ok(_) => {
+                let _ = controller.stop();
+                return 6;
+            }
+            Err(_) => {
+                let _ = controller.stop();
+                return 6;
+            }
+        }
+    }
 }
