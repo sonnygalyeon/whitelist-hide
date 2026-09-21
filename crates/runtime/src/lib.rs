@@ -35,6 +35,8 @@ pub struct RuntimeState {
     pub engine_binary: Option<PathBuf>,
     pub owned_interface: Option<String>,
     pub owned_firewall_scope: Option<String>,
+    #[serde(default)]
+    pub owned_firewall_token: Option<String>,
     pub previous_tcp_keepinit: Option<u32>,
 }
 
@@ -50,6 +52,7 @@ impl RuntimeState {
             engine_binary: None,
             owned_interface: None,
             owned_firewall_scope: None,
+            owned_firewall_token: None,
             previous_tcp_keepinit: None,
         }
     }
@@ -94,6 +97,14 @@ impl RuntimeState {
             if !safe_token(scope) {
                 return Err(RuntimeStateError::InvalidState(
                     "owned_firewall_scope contains unsupported characters".to_owned(),
+                ));
+            }
+        }
+
+        if let Some(token) = &self.owned_firewall_token {
+            if token.is_empty() || !token.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+                return Err(RuntimeStateError::InvalidState(
+                    "owned_firewall_token must be hexadecimal".to_owned(),
                 ));
             }
         }
@@ -240,10 +251,30 @@ pub struct EngineLaunchReport {
     pub binary: PathBuf,
 }
 
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct EngineLaunchOptions {
+    pub args: Vec<String>,
+    pub env: Vec<(String, String)>,
+}
+
 pub fn launch_verified_engine(
     manifest_path: &Path,
     binary_path: &Path,
     args: &[String],
+    store: &StateStore,
+    session_id: &str,
+) -> Result<EngineLaunchReport, EngineRuntimeError> {
+    let options = EngineLaunchOptions {
+        args: args.to_vec(),
+        env: Vec::new(),
+    };
+    launch_verified_engine_with_options(manifest_path, binary_path, &options, store, session_id)
+}
+
+pub fn launch_verified_engine_with_options(
+    manifest_path: &Path,
+    binary_path: &Path,
+    options: &EngineLaunchOptions,
     store: &StateStore,
     session_id: &str,
 ) -> Result<EngineLaunchReport, EngineRuntimeError> {
@@ -293,13 +324,20 @@ pub fn launch_verified_engine(
     state.engine_binary = Some(binary.clone());
     store.save(&state)?;
 
-    let mut child = match Command::new(&binary)
-        .args(args)
+    validate_environment(&options.env)?;
+
+    let mut command = Command::new(&binary);
+    command
+        .args(&options.args)
         .stdin(Stdio::null())
         .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .spawn()
-    {
+        .stderr(Stdio::null());
+
+    for (key, value) in &options.env {
+        command.env(key, value);
+    }
+
+    let mut child = match command.spawn() {
         Ok(child) => child,
         Err(source) => {
             state.phase = RuntimePhase::Failed;
@@ -337,6 +375,33 @@ pub fn launch_verified_engine(
         sha256: verification.actual_sha256,
         binary,
     })
+}
+
+fn validate_environment(env: &[(String, String)]) -> Result<(), EngineRuntimeError> {
+    for (key, value) in env {
+        if key.is_empty()
+            || !key
+                .bytes()
+                .all(|byte| byte.is_ascii_alphanumeric() || byte == b'_')
+        {
+            return Err(EngineRuntimeError::InvalidEnvironmentKey(key.clone()));
+        }
+
+        if value.contains('\0') {
+            return Err(EngineRuntimeError::InvalidEnvironmentValue(key.clone()));
+        }
+    }
+    Ok(())
+}
+
+pub fn recorded_engine_alive(store: &StateStore) -> Result<bool, EngineRuntimeError> {
+    let Some(state) = store.load()? else {
+        return Ok(false);
+    };
+    let (Some(pid), Some(binary)) = (state.engine_pid, state.engine_binary.as_deref()) else {
+        return Ok(false);
+    };
+    process_matches(pid, binary)
 }
 
 pub fn stop_recorded_engine(store: &StateStore) -> Result<bool, EngineRuntimeError> {
@@ -503,6 +568,8 @@ pub enum EngineRuntimeError {
         actual_platform: String,
     },
     ExitedEarly(Option<i32>),
+    InvalidEnvironmentKey(String),
+    InvalidEnvironmentValue(String),
     MissingEngineIdentity,
     ProcessIdentityMismatch {
         pid: u32,
@@ -548,6 +615,12 @@ impl fmt::Display for EngineRuntimeError {
                     f,
                     "engine exited before runtime ownership was established: {code:?}"
                 )
+            }
+            Self::InvalidEnvironmentKey(key) => {
+                write!(f, "invalid engine environment key: {key}")
+            }
+            Self::InvalidEnvironmentValue(key) => {
+                write!(f, "engine environment value for {key} contains NUL")
             }
             Self::MissingEngineIdentity => {
                 f.write_str("runtime state has a PID but no recorded engine binary identity")
@@ -627,6 +700,12 @@ mod tests {
 
         assert_eq!(loaded, state);
         store.clear().expect("cleanup should succeed");
+    }
+
+    #[test]
+    fn rejects_unsafe_environment_keys() {
+        let env = vec![("BAD=KEY".to_owned(), "value".to_owned())];
+        assert!(validate_environment(&env).is_err());
     }
 
     #[test]

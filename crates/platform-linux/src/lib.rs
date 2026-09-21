@@ -1,14 +1,125 @@
 use std::error::Error;
 use std::fmt;
-use std::process::Command;
+use std::io::Write;
+use std::process::{Command, Stdio};
 
 use whitelist_hide_core::Platform;
+use whitelist_hide_core::strategy::PortRange;
 use whitelist_hide_service::{
     ActionPlan, ActionResult, ActionStep, BackendAction, BackendState, BackendStatus,
     DiagnosticItem, DiagnosticLevel, PlatformBackend,
 };
 
 pub const NFT_TABLE: &str = "inet whitelist_hide";
+
+pub const NFQUEUE_NUM: u16 = 200;
+
+pub fn owned_table_exists() -> Result<bool, LinuxError> {
+    ensure_linux()?;
+    match Command::new("nft")
+        .args(["list", "table", "inet", "whitelist_hide"])
+        .output()
+    {
+        Ok(output) => Ok(output.status.success()),
+        Err(source) => Err(LinuxError::CommandIo(source)),
+    }
+}
+
+pub fn install_nfqueue_rules(
+    tcp_ports: &[PortRange],
+    udp_ports: &[PortRange],
+    queue: u16,
+) -> Result<(), LinuxError> {
+    ensure_linux()?;
+
+    if owned_table_exists()? {
+        return Err(LinuxError::ActionUnavailable(
+            "refusing to overwrite existing inet whitelist_hide table without owned runtime state"
+                .to_owned(),
+        ));
+    }
+
+    let rules = nft_rules(tcp_ports, udp_ports, queue);
+    let mut child = Command::new("nft")
+        .args(["-f", "-"])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::null())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(LinuxError::CommandIo)?;
+
+    child
+        .stdin
+        .as_mut()
+        .ok_or_else(|| LinuxError::ActionUnavailable("nft stdin is unavailable".to_owned()))?
+        .write_all(rules.as_bytes())
+        .map_err(LinuxError::CommandIo)?;
+
+    let output = child.wait_with_output().map_err(LinuxError::CommandIo)?;
+    if output.status.success() {
+        Ok(())
+    } else {
+        Err(LinuxError::CommandFailed(
+            String::from_utf8_lossy(&output.stderr).trim().to_owned(),
+        ))
+    }
+}
+
+pub fn remove_owned_table() -> Result<bool, LinuxError> {
+    ensure_linux()?;
+    if !owned_table_exists()? {
+        return Ok(false);
+    }
+
+    let output = Command::new("nft")
+        .args(["delete", "table", "inet", "whitelist_hide"])
+        .output()
+        .map_err(LinuxError::CommandIo)?;
+
+    if output.status.success() {
+        Ok(true)
+    } else {
+        Err(LinuxError::CommandFailed(
+            String::from_utf8_lossy(&output.stderr).trim().to_owned(),
+        ))
+    }
+}
+
+fn nft_rules(tcp_ports: &[PortRange], udp_ports: &[PortRange], queue: u16) -> String {
+    let mut rules = String::from(
+        "table inet whitelist_hide {\n  chain output {\n    type filter hook output priority mangle; policy accept;\n",
+    );
+
+    if !tcp_ports.is_empty() {
+        rules.push_str(&format!(
+            "    tcp dport {{ {} }} queue num {queue} bypass\n",
+            nft_ports(tcp_ports)
+        ));
+    }
+    if !udp_ports.is_empty() {
+        rules.push_str(&format!(
+            "    udp dport {{ {} }} queue num {queue} bypass\n",
+            nft_ports(udp_ports)
+        ));
+    }
+
+    rules.push_str("  }\n}\n");
+    rules
+}
+
+fn nft_ports(ranges: &[PortRange]) -> String {
+    ranges
+        .iter()
+        .map(|range| {
+            if range.start == range.end {
+                range.start.to_string()
+            } else {
+                format!("{}-{}", range.start, range.end)
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(", ")
+}
 
 pub struct LinuxBackend;
 
@@ -200,15 +311,52 @@ fn plan(id: &str, title: &str, executable_now: bool, steps: Vec<ActionStep>) -> 
 
 #[derive(Debug)]
 pub enum LinuxError {
+    CommandIo(std::io::Error),
+    CommandFailed(String),
     ActionUnavailable(String),
 }
 
 impl fmt::Display for LinuxError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            Self::CommandIo(source) => write!(f, "Linux command failed: {source}"),
+            Self::CommandFailed(message) => write!(f, "Linux command returned an error: {message}"),
             Self::ActionUnavailable(message) => f.write_str(message),
         }
     }
 }
 
-impl Error for LinuxError {}
+impl Error for LinuxError {
+    fn source(&self) -> Option<&(dyn Error + 'static)> {
+        match self {
+            Self::CommandIo(source) => Some(source),
+            Self::CommandFailed(_) | Self::ActionUnavailable(_) => None,
+        }
+    }
+}
+
+#[cfg(test)]
+mod mutation_tests {
+    use super::*;
+
+    #[test]
+    fn nft_plan_is_scoped_and_uses_bypass() {
+        let rules = nft_rules(
+            &[
+                PortRange { start: 80, end: 80 },
+                PortRange {
+                    start: 443,
+                    end: 443,
+                },
+            ],
+            &[PortRange {
+                start: 443,
+                end: 443,
+            }],
+            NFQUEUE_NUM,
+        );
+        assert!(rules.contains("table inet whitelist_hide"));
+        assert!(rules.contains("queue num 200 bypass"));
+        assert!(!rules.contains("flush ruleset"));
+    }
+}

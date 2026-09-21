@@ -9,6 +9,24 @@ use whitelist_hide_service::{
     DiagnosticItem, DiagnosticLevel, PlatformBackend,
 };
 
+pub fn windivert_service_running() -> Result<bool, WindowsError> {
+    ensure_windows()?;
+    let output = Command::new("sc")
+        .args(["query", "WinDivert"])
+        .output()
+        .map_err(WindowsError::CommandIo)?;
+
+    if !output.status.success() {
+        return Ok(false);
+    }
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    Ok(stdout.lines().any(|line| {
+        let line = line.trim();
+        line.starts_with("STATE") && line.contains("RUNNING")
+    }))
+}
+
 pub struct WindowsBackend;
 
 impl WindowsBackend {

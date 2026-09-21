@@ -26,11 +26,18 @@ The macOS fork contains the `utun` transport required by the current backend des
 
 ### Windows
 
-The same bol-van source commit is pinned for `winws.exe`, but automated Cygwin/WinDivert source building is intentionally marked pending. A Windows artifact is not considered release-trusted until that build is reproducible in CI.
+- repository: bol-van/zapret2
+- commit: `00f5aaa36de500971faf6db440dd7d8b25672281`
+- source directory: `nfq2`
+- output: `winws2.exe`
+- license: MIT, verified from `docs/LICENSE.txt`
+- WinDivert runtime: 2.2.2
+
+The Windows build follows the current upstream model: Cygwin x86_64, static LuaJIT, `make cygwin64`, then a separately checksummed WinDivert 2.2.2 runtime bundle.
 
 ## Source-build workflow
 
-`.github/workflows/engine-source-build.yml` currently builds macOS and Linux engines from exact commits.
+`.github/workflows/engine-source-build.yml` builds macOS, Linux and Windows engines from exact pinned source commits.
 
 The workflow:
 

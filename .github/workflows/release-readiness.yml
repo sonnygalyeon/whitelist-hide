@@ -1,0 +1,106 @@
+name: release-readiness
+
+on:
+  push:
+    branches:
+      - feature/release-candidate
+      - ver1.0
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  metadata:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Validate supply-chain release gate
+        run: python3 scripts/release_gate.py
+
+  strategy-compiler:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        engine: [utunws, nfqws, winws]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Compile example strategy
+        run: cargo run --locked -p whitelist-hide-cli -- strategy compile examples/strategy.example.toml ${{ matrix.engine }}
+
+  msrv:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.85.0
+      - name: Check declared Rust MSRV
+        run: cargo check --workspace --all-targets --locked
+
+  rust-release:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Build locked release CLI
+        run: cargo build --release --locked -p whitelist-hide-cli
+      - name: Test locked workspace
+        run: cargo test --workspace --locked
+
+  desktop-check:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Install Linux Tauri dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
+      - name: Install frontend dependencies
+        working-directory: apps/desktop
+        run: npm ci
+      - name: Build frontend
+        working-directory: apps/desktop
+        run: npm run build
+      - name: Generate platform icons
+        working-directory: apps/desktop
+        run: npx tauri icon app-icon.svg
+      - name: Build privileged helper
+        run: cargo build --release --locked -p whitelist-hide-helper
+      - name: Prepare helper sidecar on Unix
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          set -euo pipefail
+          target="$(rustc -vV | sed -n 's/^host: //p')"
+          mkdir -p apps/desktop/src-tauri/binaries
+          cp target/release/whitelist-hide-helper "apps/desktop/src-tauri/binaries/whitelist-hide-helper-$target"
+          chmod 0755 "apps/desktop/src-tauri/binaries/whitelist-hide-helper-$target"
+      - name: Prepare helper sidecar on Windows
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $target = (rustc -vV | Select-String '^host: ').Line.Substring(6)
+          New-Item -ItemType Directory -Force apps/desktop/src-tauri/binaries | Out-Null
+          Copy-Item target/release/whitelist-hide-helper.exe "apps/desktop/src-tauri/binaries/whitelist-hide-helper-$target.exe"
+      - name: Check locked Tauri Rust application
+        run: cargo check --manifest-path apps/desktop/src-tauri/Cargo.toml --locked

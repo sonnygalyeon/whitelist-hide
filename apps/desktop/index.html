@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="en">
+<html lang="ru">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
@@ -7,10 +7,42 @@
   </head>
   <body>
     <main>
-      <h1>whitelist-hide</h1>
-      <p>Desktop shell is connected. Final interface design is intentionally pending.</p>
-      <button id="version" type="button">Read backend version</button>
-      <pre id="output"></pre>
+      <header>
+        <h1>whitelist-hide</h1>
+        <p>Единый Rust lifecycle для CLI и desktop.</p>
+      </header>
+
+      <section>
+        <h2>Сессия</h2>
+        <label>
+          Config
+          <input id="config" type="text" placeholder="/path/to/config.toml" />
+        </label>
+        <label>
+          Strategy
+          <input id="strategy" type="text" placeholder="/path/to/strategy.toml" />
+        </label>
+        <div>
+          <button id="start" type="button">Start</button>
+          <button id="stop" type="button">Stop</button>
+          <button id="health" type="button">Health</button>
+        </div>
+        <pre id="session-output"></pre>
+      </section>
+
+      <section>
+        <button id="refresh" type="button">Обновить диагностику</button>
+        <span id="state">Загрузка…</span>
+      </section>
+
+      <section>
+        <h2>Диагностика</h2>
+        <div id="diagnostics"></div>
+      </section>
+
+      <footer>
+        <small id="version"></small>
+      </footer>
     </main>
     <script type="module" src="/src/main.js"></script>
   </body>

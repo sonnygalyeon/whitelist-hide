@@ -3,14 +3,18 @@ name: engine-source-build
 on:
   workflow_dispatch:
   push:
+    tags:
+      - "v*"
     paths:
       - "third_party/upstream.lock.toml"
       - "scripts/upstream_lock.py"
+      - "scripts/windivert_lock.py"
       - ".github/workflows/engine-source-build.yml"
   pull_request:
     paths:
       - "third_party/upstream.lock.toml"
       - "scripts/upstream_lock.py"
+      - "scripts/windivert_lock.py"
       - ".github/workflows/engine-source-build.yml"
 
 permissions:
@@ -132,4 +136,111 @@ jobs:
         with:
           name: source-built-linux-nfqws
           path: dist/linux/
+          if-no-files-found: error
+
+  windows-winws2:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Read pinned Windows upstream
+        id: upstream
+        shell: pwsh
+        run: python scripts/upstream_lock.py windows --github-output "$env:GITHUB_OUTPUT"
+
+      - name: Fetch exact upstream commit
+        shell: pwsh
+        env:
+          REPOSITORY: ${{ steps.upstream.outputs.repository }}
+          COMMIT: ${{ steps.upstream.outputs.commit }}
+          LICENSE_PATH: ${{ steps.upstream.outputs.license_path }}
+        run: |
+          git init upstream
+          git -C upstream remote add origin "$env:REPOSITORY"
+          git -C upstream fetch --depth 1 origin "$env:COMMIT"
+          if ((git -C upstream rev-parse FETCH_HEAD) -ne "$env:COMMIT") { throw "unexpected FETCH_HEAD" }
+          git -C upstream checkout --detach "$env:COMMIT"
+          if ((git -C upstream rev-parse HEAD) -ne "$env:COMMIT") { throw "unexpected HEAD" }
+          if (-not (Test-Path "upstream/$env:LICENSE_PATH")) { throw "license file missing" }
+
+      - name: Set up Cygwin
+        uses: cygwin/cygwin-install-action@v4
+        with:
+          platform: x86_64
+          site: http://ctm.crouchingtigerhiddenfruitbat.org/pub/cygwin/circa/64bit/2024/01/30/231215
+          check-sig: 'false'
+          packages: >-
+            gcc-core
+            make
+            zlib-devel
+            wget
+
+      - name: Build static LuaJIT
+        env:
+          LUAJIT_RELEASE: 2.1-20250826
+          MINSIZE: -Os -flto=auto -ffunction-sections -fdata-sections
+          LDMINSIZE: -Wl,--gc-sections -flto=auto
+        shell: C:\cygwin\bin\bash.exe -eo pipefail '{0}'
+        run: >-
+          export MAKEFLAGS=-j$(nproc) &&
+          wget -q https://github.com/openresty/luajit2/archive/refs/tags/v${LUAJIT_RELEASE}.tar.gz &&
+          tar -xzf v${LUAJIT_RELEASE}.tar.gz &&
+          rm -f v${LUAJIT_RELEASE}.tar.gz &&
+          make -C luajit2-${LUAJIT_RELEASE} BUILDMODE=static XCFLAGS="-DLUAJIT_USE_SYSMALLOC -DLUAJIT_DISABLE_FFI -ffat-lto-objects" TARGET_CFLAGS="$MINSIZE" TARGET_LDFLAGS="$LDMINSIZE" &&
+          make -C luajit2-${LUAJIT_RELEASE} install
+
+      - name: Build winws2 from pinned source
+        shell: C:\cygwin\bin\bash.exe -eo pipefail '{0}'
+        env:
+          COMMIT: ${{ steps.upstream.outputs.commit }}
+          SUBDIR: ${{ steps.upstream.outputs.subdir }}
+          BUILD_TARGET: ${{ steps.upstream.outputs.build_target }}
+          ARTIFACT: ${{ steps.upstream.outputs.artifact }}
+          LICENSE_NAME: ${{ steps.upstream.outputs.license }}
+        run: >-
+          export MAKEFLAGS=-j$(nproc) &&
+          export CFLAGS="-DZAPRET_GH_HASH=$COMMIT" &&
+          make -C "upstream/$SUBDIR" "$BUILD_TARGET" &&
+          test -f "upstream/$SUBDIR/$ARTIFACT" &&
+          mkdir -p dist/windows &&
+          cp "upstream/$SUBDIR/$ARTIFACT" dist/windows/ &&
+          cp /usr/bin/cygwin1.dll dist/windows/ &&
+          printf 'source_commit=%s\nlicense=%s\nbuilder=github-actions/windows-latest\nwindivert=2.2.2\n' "$COMMIT" "$LICENSE_NAME" > dist/windows/PROVENANCE.txt
+
+      - name: Read pinned WinDivert release
+        id: windivert
+        shell: pwsh
+        run: python scripts/windivert_lock.py --github-output "$env:GITHUB_OUTPUT"
+
+      - name: Fetch and verify pinned WinDivert runtime
+        shell: pwsh
+        env:
+          ASSET_URL: ${{ steps.windivert.outputs.asset_url }}
+          EXPECTED_SHA256: ${{ steps.windivert.outputs.sha256 }}
+          WINDIVERT_VERSION: ${{ steps.windivert.outputs.version }}
+          WINDIVERT_COMMIT: ${{ steps.windivert.outputs.commit }}
+          WINDIVERT_LICENSE: ${{ steps.windivert.outputs.license }}
+        run: |
+          Invoke-WebRequest -Uri "$env:ASSET_URL" -OutFile WinDivert.zip
+          $actual = (Get-FileHash WinDivert.zip -Algorithm SHA256).Hash.ToLowerInvariant()
+          if ($actual -ne "$env:EXPECTED_SHA256") {
+            throw "WinDivert archive SHA-256 mismatch: expected $env:EXPECTED_SHA256, got $actual"
+          }
+          Expand-Archive WinDivert.zip -DestinationPath WinDivert
+          $root = "WinDivert/WinDivert-$env:WINDIVERT_VERSION-A"
+          Copy-Item "$root/x64/WinDivert.dll" dist/windows/WinDivert.dll
+          Copy-Item "$root/x64/WinDivert64.sys" dist/windows/WinDivert64.sys
+          if (Test-Path "$root/LICENSE") {
+            Copy-Item "$root/LICENSE" dist/windows/WinDivert-LICENSE.txt
+          }
+          Add-Content dist/windows/PROVENANCE.txt "windivert_commit=$env:WINDIVERT_COMMIT"
+          Add-Content dist/windows/PROVENANCE.txt "windivert_license=$env:WINDIVERT_LICENSE"
+          Add-Content dist/windows/PROVENANCE.txt "windivert_archive_sha256=$env:EXPECTED_SHA256"
+          Get-ChildItem dist/windows -File | Where-Object { $_.Name -ne "PROVENANCE.txt" } | ForEach-Object { $hash = (Get-FileHash $_.FullName -Algorithm SHA256).Hash.ToLowerInvariant(); "$hash  $($_.Name)" } | Set-Content -Encoding ascii dist/windows/SHA256SUMS
+
+      - name: Upload source-built Windows engine bundle
+        uses: actions/upload-artifact@v4
+        with:
+          name: source-built-windows-winws2
+          path: dist/windows/
           if-no-files-found: error
