@@ -318,14 +318,14 @@ fn linux_nft_rules(plan: &EnginePlan) -> String {
     if let Some(ports) = tcp {
         rules.push_str(&format!(
             "    meta mark != 0x40000000 tcp dport {{ {} }} queue num {} bypass\n",
-            ports.replace('-', "-"),
+            ports,
             LINUX_QUEUE
         ));
     }
     if let Some(ports) = udp {
         rules.push_str(&format!(
             "    meta mark != 0x40000000 udp dport {{ {} }} queue num {} bypass\n",
-            ports.replace('-', "-"),
+            ports,
             LINUX_QUEUE
         ));
     }
