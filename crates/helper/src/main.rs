@@ -46,10 +46,7 @@ fn main() {
             Ok(report) => {
                 println!("running={}", report.running);
                 println!("engine_alive={}", report.engine_alive);
-                println!(
-                    "network_resource={}",
-                    report.owned_network_resource_present
-                );
+                println!("network_resource={}", report.owned_network_resource_present);
                 if report.running { 0 } else { 6 }
             }
             Err(error) => {
@@ -58,16 +55,13 @@ fn main() {
             }
         },
         _ => {
-            eprintln!(
-                "usage: whitelist-hide-helper start <CONFIG> <STRATEGY> | stop | health"
-            );
+            eprintln!("usage: whitelist-hide-helper start <CONFIG> <STRATEGY> | stop | health");
             2
         }
     };
 
     std::process::exit(code);
 }
-
 
 fn spawn_watchdog() -> Result<u32, std::io::Error> {
     let executable = env::current_exe()?;
@@ -84,7 +78,9 @@ fn watchdog(controller: &SessionController) -> i32 {
     loop {
         match controller.health() {
             Ok(report) if report.running => thread::sleep(Duration::from_secs(2)),
-            Ok(report) if !report.engine_alive && !report.owned_network_resource_present => return 0,
+            Ok(report) if !report.engine_alive && !report.owned_network_resource_present => {
+                return 0;
+            }
             Ok(_) => {
                 let _ = controller.stop();
                 return 6;
