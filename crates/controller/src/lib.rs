@@ -1,0 +1,825 @@
+use std::error::Error;
+use std::fmt;
+use std::fs;
+use std::io::{self, Write};
+use std::path::{Path, PathBuf};
+use std::process::{Command, Stdio};
+use std::thread;
+use std::time::Duration;
+
+use whitelist_hide_core::compiler::{
+    CompiledStrategy, EngineTarget, compile_strategy, target_for_current_platform,
+};
+use whitelist_hide_core::config::AppConfig;
+use whitelist_hide_core::strategy::{PortRange, StrategyDefinition, StrategyError};
+use whitelist_hide_core::Platform;
+use whitelist_hide_runtime::{
+    EngineRuntimeError, RuntimePhase, RuntimeState, RuntimeStateError, StateStore,
+    launch_verified_engine, launch_verified_engine_with_env, recorded_engine_alive,
+    stop_recorded_engine,
+};
+
+pub const NFQUEUE_NUM: u16 = 200;
+pub const MACOS_UTUN_UNIT: u16 = 51;
+pub const MACOS_UTUN_INTERFACE: &str = "utun50";
+pub const MACOS_PF_ANCHOR: &str = "com.apple/whitelist-hide";
+pub const LINUX_NFT_TABLE: &str = "whitelist_hide";
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SessionReport {
+    pub platform: Platform,
+    pub strategy: String,
+    pub engine_pid: u32,
+    pub runtime_state: PathBuf,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SessionStatus {
+    pub platform: Platform,
+    pub running: bool,
+    pub healthy: bool,
+    pub engine_pid: Option<u32>,
+    pub strategy: Option<String>,
+    pub detail: String,
+}
+
+struct PreparedSession {
+    config: AppConfig,
+    strategy_path: PathBuf,
+    strategy: StrategyDefinition,
+    compiled: CompiledStrategy,
+    manifest: PathBuf,
+    binary: PathBuf,
+}
+
+pub fn runtime_state_path() -> PathBuf {
+    match Platform::detect() {
+        Platform::Windows => std::env::var_os("PROGRAMDATA")
+            .map(PathBuf::from)
+            .unwrap_or_else(|| PathBuf::from("."))
+            .join("whitelist-hide")
+            .join("runtime-state.json"),
+        Platform::MacOS => PathBuf::from("/var/run/whitelist-hide/runtime-state.json"),
+        Platform::Linux => PathBuf::from("/run/whitelist-hide/runtime-state.json"),
+        Platform::Unsupported => PathBuf::from("runtime-state.json"),
+    }
+}
+
+pub fn start(config_path: &Path) -> Result<SessionReport, ControllerError> {
+    let prepared = prepare(config_path)?;
+    let store = StateStore::new(runtime_state_path());
+    ensure_privileges()?;
+
+    let session_id = format!("session-{}", std::process::id());
+    let launch = match Platform::detect() {
+        Platform::Linux => start_linux(&prepared, &store, &session_id),
+        Platform::Windows => start_windows(&prepared, &store, &session_id),
+        Platform::MacOS => start_macos(&prepared, &store, &session_id),
+        Platform::Unsupported => Err(ControllerError::UnsupportedPlatform),
+    };
+
+    let report = match launch {
+        Ok(report) => report,
+        Err(error) => {
+            let _ = cleanup_network(None);
+            let _ = stop_if_owned(&store);
+            return Err(error);
+        }
+    };
+
+    if let Err(error) = spawn_watchdog() {
+        let state = store.load().ok().flatten();
+        let _ = cleanup_network(state.as_ref());
+        let _ = stop_if_owned(&store);
+        return Err(error);
+    }
+
+    Ok(report)
+}
+
+pub fn stop() -> Result<bool, ControllerError> {
+    let store = StateStore::new(runtime_state_path());
+    let Some(state) = store.load()? else {
+        return Ok(false);
+    };
+
+    cleanup_network(Some(&state))?;
+
+    if recorded_engine_alive(&state)? {
+        stop_recorded_engine(&store)?;
+    } else {
+        store.clear()?;
+    }
+
+    Ok(true)
+}
+
+pub fn status() -> Result<SessionStatus, ControllerError> {
+    let store = StateStore::new(runtime_state_path());
+    let Some(state) = store.load()? else {
+        return Ok(SessionStatus {
+            platform: Platform::detect(),
+            running: false,
+            healthy: true,
+            engine_pid: None,
+            strategy: None,
+            detail: "stopped".to_owned(),
+        });
+    };
+
+    let alive = recorded_engine_alive(&state)?;
+    let network_ok = network_health(&state).unwrap_or(false);
+    let healthy = alive && network_ok;
+
+    Ok(SessionStatus {
+        platform: Platform::detect(),
+        running: alive,
+        healthy,
+        engine_pid: state.engine_pid,
+        strategy: Some(state.session_id.clone()),
+        detail: if healthy {
+            "engine and owned packet path are healthy".to_owned()
+        } else if !alive {
+            "engine process is not alive".to_owned()
+        } else {
+            "engine is alive but owned packet path is unhealthy".to_owned()
+        },
+    })
+}
+
+pub fn watchdog_loop() -> Result<(), ControllerError> {
+    let store = StateStore::new(runtime_state_path());
+
+    loop {
+        let Some(mut state) = store.load()? else {
+            return Ok(());
+        };
+
+        if recorded_engine_alive(&state)? {
+            thread::sleep(Duration::from_secs(2));
+            continue;
+        }
+
+        match cleanup_network(Some(&state)) {
+            Ok(()) => {
+                store.clear()?;
+                return Ok(());
+            }
+            Err(_) => {
+                state.phase = RuntimePhase::Failed;
+                store.save(&state)?;
+                thread::sleep(Duration::from_secs(2));
+            }
+        }
+    }
+}
+
+fn prepare(config_path: &Path) -> Result<PreparedSession, ControllerError> {
+    let config = AppConfig::load(config_path)?;
+    let strategy_path = config.resolve_strategy_path(config_path);
+    let strategy = StrategyDefinition::load(&strategy_path)?;
+    let target = target_for_current_platform(NFQUEUE_NUM)
+        .ok_or(ControllerError::UnsupportedPlatform)?;
+    let compiled = compile_strategy(&strategy, &strategy_path, target)?;
+    let engine = config.resolve_engine_paths(config_path);
+
+    Ok(PreparedSession {
+        config,
+        strategy_path,
+        strategy,
+        compiled,
+        manifest: engine.manifest,
+        binary: engine.binary,
+    })
+}
+
+fn start_linux(
+    prepared: &PreparedSession,
+    store: &StateStore,
+    session_id: &str,
+) -> Result<SessionReport, ControllerError> {
+    let launch = launch_verified_engine(
+        &prepared.manifest,
+        &prepared.binary,
+        &prepared.compiled.args,
+        store,
+        session_id,
+    )?;
+
+    apply_linux_nft(&prepared.strategy)?;
+
+    let mut state = store
+        .load()?
+        .ok_or_else(|| ControllerError::State("runtime journal disappeared after launch".to_owned()))?;
+    state.owned_firewall_scope = Some(format!("inet:{LINUX_NFT_TABLE}"));
+    store.save(&state)?;
+
+    Ok(SessionReport {
+        platform: Platform::Linux,
+        strategy: prepared.config.strategy.name.clone(),
+        engine_pid: launch.pid,
+        runtime_state: store.path().to_path_buf(),
+    })
+}
+
+fn start_windows(
+    prepared: &PreparedSession,
+    store: &StateStore,
+    session_id: &str,
+) -> Result<SessionReport, ControllerError> {
+    verify_windows_companions(&prepared.binary)?;
+
+    let launch = launch_verified_engine(
+        &prepared.manifest,
+        &prepared.binary,
+        &prepared.compiled.args,
+        store,
+        session_id,
+    )?;
+
+    Ok(SessionReport {
+        platform: Platform::Windows,
+        strategy: prepared.config.strategy.name.clone(),
+        engine_pid: launch.pid,
+        runtime_state: store.path().to_path_buf(),
+    })
+}
+
+fn start_macos(
+    prepared: &PreparedSession,
+    store: &StateStore,
+    session_id: &str,
+) -> Result<SessionReport, ControllerError> {
+    let route = command_text("/sbin/route", &["-n", "get", "default"])?;
+    let interface = field_value(&route, "interface:")
+        .ok_or_else(|| ControllerError::State("default route interface not found".to_owned()))?;
+    let gateway = field_value(&route, "gateway:")
+        .ok_or_else(|| ControllerError::State("default route gateway not found".to_owned()))?;
+
+    let _ = Command::new("/sbin/ping")
+        .args(["-c", "1", "-t", "1", &gateway])
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status();
+
+    let arp = command_text("/usr/sbin/arp", &["-n", &gateway])?;
+    let gateway_mac = parse_arp_mac(&arp)
+        .ok_or_else(|| ControllerError::State("default gateway MAC was not resolved".to_owned()))?;
+
+    let env = vec![
+        ("ZAPRET_IFACE".to_owned(), interface),
+        ("ZAPRET_GATEWAY_MAC".to_owned(), gateway_mac),
+        ("ZAPRET_GATEWAY6_MAC".to_owned(), String::new()),
+        ("ZAPRET_UTUN_UNIT".to_owned(), MACOS_UTUN_UNIT.to_string()),
+    ];
+
+    let launch = launch_verified_engine_with_env(
+        &prepared.manifest,
+        &prepared.binary,
+        &prepared.compiled.args,
+        &env,
+        store,
+        session_id,
+    )?;
+
+    wait_for_macos_utun(store)?;
+
+    command_ok(
+        "/sbin/ifconfig",
+        &[
+            MACOS_UTUN_INTERFACE,
+            "10.77.0.1",
+            "10.77.0.2",
+            "netmask",
+            "255.255.255.255",
+            "up",
+        ],
+    )?;
+
+    let mut state = store
+        .load()?
+        .ok_or_else(|| ControllerError::State("runtime journal disappeared after launch".to_owned()))?;
+    state.owned_interface = Some(MACOS_UTUN_INTERFACE.to_owned());
+    state.owned_firewall_scope = Some(MACOS_PF_ANCHOR.to_owned());
+
+    let pf_info = command_text("/sbin/pfctl", &["-s", "info"])?;
+    if pf_info.lines().any(|line| line.trim().starts_with("Status: Disabled")) {
+        let enabled = command_text_combined("/sbin/pfctl", &["-E"])?;
+        state.pf_token = parse_pf_token(&enabled);
+        if state.pf_token.is_none() {
+            return Err(ControllerError::State(
+                "pf was disabled and enabling it returned no ownership token".to_owned(),
+            ));
+        }
+    }
+
+    store.save(&state)?;
+
+    let rules = macos_pf_rules(&prepared.strategy);
+    run_with_input(
+        "/sbin/pfctl",
+        &["-a", MACOS_PF_ANCHOR, "-f", "-"],
+        rules.as_bytes(),
+    )?;
+
+    Ok(SessionReport {
+        platform: Platform::MacOS,
+        strategy: prepared.config.strategy.name.clone(),
+        engine_pid: launch.pid,
+        runtime_state: store.path().to_path_buf(),
+    })
+}
+
+fn wait_for_macos_utun(store: &StateStore) -> Result<(), ControllerError> {
+    for _ in 0..100 {
+        let present = Command::new("/sbin/ifconfig")
+            .arg(MACOS_UTUN_INTERFACE)
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status()
+            .map(|status| status.success())
+            .unwrap_or(false);
+        if present {
+            return Ok(());
+        }
+
+        if let Some(state) = store.load()? {
+            if !recorded_engine_alive(&state)? {
+                return Err(ControllerError::State(
+                    "utun engine exited before its interface became ready".to_owned(),
+                ));
+            }
+        }
+        thread::sleep(Duration::from_millis(100));
+    }
+
+    Err(ControllerError::State(format!(
+        "{} did not appear within 10 seconds",
+        MACOS_UTUN_INTERFACE
+    )))
+}
+
+fn cleanup_network(state: Option<&RuntimeState>) -> Result<(), ControllerError> {
+    match Platform::detect() {
+        Platform::Linux => cleanup_linux_nft(),
+        Platform::MacOS => cleanup_macos_pf(state),
+        Platform::Windows => Ok(()),
+        Platform::Unsupported => Err(ControllerError::UnsupportedPlatform),
+    }
+}
+
+fn network_health(state: &RuntimeState) -> Result<bool, ControllerError> {
+    match Platform::detect() {
+        Platform::Linux => Ok(Command::new("nft")
+            .args(["list", "table", "inet", LINUX_NFT_TABLE])
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status()
+            .map(|status| status.success())
+            .unwrap_or(false)),
+        Platform::MacOS => {
+            let utun = Command::new("/sbin/ifconfig")
+                .arg(MACOS_UTUN_INTERFACE)
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .status()
+                .map(|status| status.success())
+                .unwrap_or(false);
+            let anchor = Command::new("/sbin/pfctl")
+                .args(["-a", MACOS_PF_ANCHOR, "-sr"])
+                .output()
+                .map(|output| output.status.success() && !output.stdout.is_empty())
+                .unwrap_or(false);
+            Ok(utun && anchor)
+        }
+        Platform::Windows => Ok(state.engine_pid.is_some()),
+        Platform::Unsupported => Ok(false),
+    }
+}
+
+fn apply_linux_nft(strategy: &StrategyDefinition) -> Result<(), ControllerError> {
+    cleanup_linux_nft()?;
+
+    let rules = linux_nft_rules(strategy);
+    run_with_input("nft", &["-f", "-"], rules.as_bytes())
+}
+
+fn cleanup_linux_nft() -> Result<(), ControllerError> {
+    let exists = Command::new("nft")
+        .args(["list", "table", "inet", LINUX_NFT_TABLE])
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .map(|status| status.success())
+        .unwrap_or(false);
+
+    if exists {
+        command_ok("nft", &["delete", "table", "inet", LINUX_NFT_TABLE])?;
+    }
+    Ok(())
+}
+
+fn cleanup_macos_pf(state: Option<&RuntimeState>) -> Result<(), ControllerError> {
+    let flush = Command::new("/sbin/pfctl")
+        .args(["-a", MACOS_PF_ANCHOR, "-F", "all"])
+        .stdout(Stdio::null())
+        .stderr(Stdio::piped())
+        .output();
+
+    if let Ok(output) = flush {
+        if !output.status.success() {
+            return Err(ControllerError::Command {
+                program: "/sbin/pfctl".to_owned(),
+                detail: String::from_utf8_lossy(&output.stderr).trim().to_owned(),
+            });
+        }
+    }
+
+    if let Some(token) = state.and_then(|value| value.pf_token.as_deref()) {
+        command_ok("/sbin/pfctl", &["-X", token])?;
+    }
+
+    Ok(())
+}
+
+fn verify_windows_companions(binary: &Path) -> Result<(), ControllerError> {
+    let base = binary.parent().unwrap_or_else(|| Path::new("."));
+    for filename in ["cygwin1.dll", "WinDivert.dll", "WinDivert64.sys"] {
+        let path = base.join(filename);
+        if !path.is_file() {
+            return Err(ControllerError::State(format!(
+                "required Windows runtime companion is missing: {}",
+                path.display()
+            )));
+        }
+    }
+    Ok(())
+}
+
+fn spawn_watchdog() -> Result<(), ControllerError> {
+    let current = std::env::current_exe().map_err(|source| ControllerError::Io {
+        path: PathBuf::from("<current-exe>"),
+        source,
+    })?;
+    let directory = current.parent().unwrap_or_else(|| Path::new("."));
+    let filename = if cfg!(target_os = "windows") {
+        "whitelist-hide-watchdog.exe"
+    } else {
+        "whitelist-hide-watchdog"
+    };
+    let watchdog = directory.join(filename);
+    if !watchdog.is_file() {
+        return Err(ControllerError::State(format!(
+            "watchdog sidecar is missing: {}",
+            watchdog.display()
+        )));
+    }
+
+    Command::new(&watchdog)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .map_err(|source| ControllerError::Io {
+            path: watchdog,
+            source,
+        })?;
+
+    Ok(())
+}
+
+fn stop_if_owned(store: &StateStore) -> Result<(), ControllerError> {
+    if let Some(state) = store.load()? {
+        if recorded_engine_alive(&state)? {
+            let _ = stop_recorded_engine(store)?;
+        } else {
+            store.clear()?;
+        }
+    }
+    Ok(())
+}
+
+fn ensure_privileges() -> Result<(), ControllerError> {
+    match Platform::detect() {
+        Platform::Linux | Platform::MacOS => {
+            let uid = command_text("/usr/bin/id", &["-u"])
+                .or_else(|_| command_text("id", &["-u"]))?;
+            if uid.trim() != "0" {
+                return Err(ControllerError::PrivilegeRequired);
+            }
+            Ok(())
+        }
+        Platform::Windows => Ok(()),
+        Platform::Unsupported => Err(ControllerError::UnsupportedPlatform),
+    }
+}
+
+fn linux_nft_rules(strategy: &StrategyDefinition) -> String {
+    let mut lines = vec![
+        format!("table inet {LINUX_NFT_TABLE} {{"),
+        "  chain output {".to_owned(),
+        "    type filter hook output priority mangle; policy accept;".to_owned(),
+    ];
+
+    if !strategy.filters.tcp_ports.is_empty() {
+        lines.push(format!(
+            "    meta mark != 0x40000000 tcp dport {{ {} }} queue num {NFQUEUE_NUM} bypass",
+            nft_ports(&strategy.filters.tcp_ports)
+        ));
+    }
+    if !strategy.filters.udp_ports.is_empty() {
+        lines.push(format!(
+            "    meta mark != 0x40000000 udp dport {{ {} }} queue num {NFQUEUE_NUM} bypass",
+            nft_ports(&strategy.filters.udp_ports)
+        ));
+    }
+
+    lines.push("  }".to_owned());
+    lines.push("}".to_owned());
+    lines.push(String::new());
+    lines.join("\n")
+}
+
+fn macos_pf_rules(strategy: &StrategyDefinition) -> String {
+    let mut rules = Vec::new();
+
+    if !strategy.filters.tcp_ports.is_empty() {
+        rules.push(format!(
+            "pass out quick route-to ({MACOS_UTUN_INTERFACE} 10.77.0.2) inet proto tcp from any to any port {{ {} }} user {{ >root }} no state",
+            pf_ports(&strategy.filters.tcp_ports)
+        ));
+    }
+    if !strategy.filters.udp_ports.is_empty() {
+        rules.push(format!(
+            "pass out quick route-to ({MACOS_UTUN_INTERFACE} 10.77.0.2) inet proto udp from any to any port {{ {} }} user {{ >root }} no state",
+            pf_ports(&strategy.filters.udp_ports)
+        ));
+    }
+
+    rules.push(String::new());
+    rules.join("\n")
+}
+
+fn nft_ports(ranges: &[PortRange]) -> String {
+    ranges
+        .iter()
+        .map(|range| {
+            if range.start == range.end {
+                range.start.to_string()
+            } else {
+                format!("{}-{}", range.start, range.end)
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
+fn pf_ports(ranges: &[PortRange]) -> String {
+    ranges
+        .iter()
+        .map(|range| {
+            if range.start == range.end {
+                range.start.to_string()
+            } else {
+                format!("{}:{}", range.start, range.end)
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(",")
+}
+
+fn field_value(text: &str, key: &str) -> Option<String> {
+    text.lines().find_map(|line| {
+        line.trim()
+            .strip_prefix(key)
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(str::to_owned)
+    })
+}
+
+fn parse_arp_mac(text: &str) -> Option<String> {
+    text.lines().find_map(|line| {
+        let (_, after) = line.split_once(" at ")?;
+        let mac = after.split_whitespace().next()?;
+        let valid = mac.split(':').count() == 6
+            && mac
+                .split(':')
+                .all(|part| !part.is_empty() && part.len() <= 2 && part.chars().all(|c| c.is_ascii_hexdigit()));
+        valid.then(|| mac.to_owned())
+    })
+}
+
+fn parse_pf_token(text: &str) -> Option<String> {
+    text.lines().find_map(|line| {
+        let line = line.trim();
+        let (_, value) = line.split_once("Token :")?;
+        let token = value.trim();
+        (!token.is_empty()).then(|| token.to_owned())
+    })
+}
+
+fn command_text(program: &str, args: &[&str]) -> Result<String, ControllerError> {
+    let output = Command::new(program)
+        .args(args)
+        .output()
+        .map_err(|source| ControllerError::Io {
+            path: PathBuf::from(program),
+            source,
+        })?;
+
+    if !output.status.success() {
+        return Err(ControllerError::Command {
+            program: program.to_owned(),
+            detail: String::from_utf8_lossy(&output.stderr).trim().to_owned(),
+        });
+    }
+
+    Ok(String::from_utf8_lossy(&output.stdout).into_owned())
+}
+
+fn command_text_combined(program: &str, args: &[&str]) -> Result<String, ControllerError> {
+    let output = Command::new(program)
+        .args(args)
+        .output()
+        .map_err(|source| ControllerError::Io {
+            path: PathBuf::from(program),
+            source,
+        })?;
+
+    let combined = format!(
+        "{}\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    if !output.status.success() {
+        return Err(ControllerError::Command {
+            program: program.to_owned(),
+            detail: combined.trim().to_owned(),
+        });
+    }
+
+    Ok(combined)
+}
+
+fn command_ok(program: &str, args: &[&str]) -> Result<(), ControllerError> {
+    command_text_combined(program, args).map(|_| ())
+}
+
+fn run_with_input(program: &str, args: &[&str], input: &[u8]) -> Result<(), ControllerError> {
+    let mut child = Command::new(program)
+        .args(args)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::null())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|source| ControllerError::Io {
+            path: PathBuf::from(program),
+            source,
+        })?;
+
+    if let Some(stdin) = child.stdin.as_mut() {
+        stdin.write_all(input).map_err(|source| ControllerError::Io {
+            path: PathBuf::from(program),
+            source,
+        })?;
+    }
+
+    let output = child.wait_with_output().map_err(|source| ControllerError::Io {
+        path: PathBuf::from(program),
+        source,
+    })?;
+
+    if output.status.success() {
+        Ok(())
+    } else {
+        Err(ControllerError::Command {
+            program: program.to_owned(),
+            detail: String::from_utf8_lossy(&output.stderr).trim().to_owned(),
+        })
+    }
+}
+
+#[derive(Debug)]
+pub enum ControllerError {
+    UnsupportedPlatform,
+    PrivilegeRequired,
+    Config(whitelist_hide_core::config::ConfigError),
+    Strategy(StrategyError),
+    Runtime(EngineRuntimeError),
+    RuntimeState(RuntimeStateError),
+    State(String),
+    Command { program: String, detail: String },
+    Io { path: PathBuf, source: io::Error },
+}
+
+impl fmt::Display for ControllerError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::UnsupportedPlatform => f.write_str("unsupported platform"),
+            Self::PrivilegeRequired => {
+                f.write_str("administrator/root privileges are required for network changes")
+            }
+            Self::Config(error) => write!(f, "{error}"),
+            Self::Strategy(error) => write!(f, "{error}"),
+            Self::Runtime(error) => write!(f, "{error}"),
+            Self::RuntimeState(error) => write!(f, "{error}"),
+            Self::State(message) => f.write_str(message),
+            Self::Command { program, detail } => write!(f, "{program} failed: {detail}"),
+            Self::Io { path, source } => write!(f, "{}: {source}", path.display()),
+        }
+    }
+}
+
+impl Error for ControllerError {
+    fn source(&self) -> Option<&(dyn Error + 'static)> {
+        match self {
+            Self::Config(error) => Some(error),
+            Self::Strategy(error) => Some(error),
+            Self::Runtime(error) => Some(error),
+            Self::RuntimeState(error) => Some(error),
+            Self::Io { source, .. } => Some(source),
+            _ => None,
+        }
+    }
+}
+
+impl From<whitelist_hide_core::config::ConfigError> for ControllerError {
+    fn from(value: whitelist_hide_core::config::ConfigError) -> Self {
+        Self::Config(value)
+    }
+}
+
+impl From<StrategyError> for ControllerError {
+    fn from(value: StrategyError) -> Self {
+        Self::Strategy(value)
+    }
+}
+
+impl From<EngineRuntimeError> for ControllerError {
+    fn from(value: EngineRuntimeError) -> Self {
+        Self::Runtime(value)
+    }
+}
+
+impl From<RuntimeStateError> for ControllerError {
+    fn from(value: RuntimeStateError) -> Self {
+        Self::RuntimeState(value)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn nft_rules_are_scoped_and_bypass_safe() {
+        let strategy = sample_strategy();
+        let rules = linux_nft_rules(&strategy);
+        assert!(rules.contains("table inet whitelist_hide"));
+        assert!(rules.contains("queue num 200 bypass"));
+        assert!(rules.contains("meta mark != 0x40000000"));
+    }
+
+    #[test]
+    fn pf_rules_use_default_macos_anchor_compatible_path() {
+        let strategy = sample_strategy();
+        let rules = macos_pf_rules(&strategy);
+        assert!(MACOS_PF_ANCHOR.starts_with("com.apple/"));
+        assert!(rules.contains("route-to (utun50 10.77.0.2)"));
+        assert!(rules.contains("user { >root }"));
+    }
+
+    #[test]
+    fn parses_gateway_mac() {
+        let arp = "? (192.168.1.1) at aa:bb:cc:dd:ee:ff on en0 ifscope [ethernet]";
+        assert_eq!(
+            parse_arp_mac(arp),
+            Some("aa:bb:cc:dd:ee:ff".to_owned())
+        );
+    }
+
+    fn sample_strategy() -> StrategyDefinition {
+        StrategyDefinition {
+            schema: 1,
+            id: "test".to_owned(),
+            description: String::new(),
+            filters: whitelist_hide_core::strategy::StrategyFilters {
+                tcp_ports: vec![
+                    PortRange { start: 80, end: 80 },
+                    PortRange {
+                        start: 443,
+                        end: 445,
+                    },
+                ],
+                udp_ports: vec![PortRange { start: 443, end: 443 }],
+                domain_lists: Vec::new(),
+                domain_exclude_lists: Vec::new(),
+                ip_lists: Vec::new(),
+                ip_exclude_lists: Vec::new(),
+            },
+            desync: Vec::new(),
+        }
+    }
+}

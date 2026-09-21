@@ -1,0 +1,15 @@
+[package]
+name = "whitelist-hide-watchdog"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+
+[[bin]]
+name = "whitelist-hide-watchdog"
+path = "src/main.rs"
+
+[dependencies]
+whitelist-hide-controller = { path = "../controller" }
+
+[lints]
+workspace = true
