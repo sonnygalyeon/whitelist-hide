@@ -22,6 +22,39 @@ let running = false;
 let busy = false;
 let profileAvailable = false;
 
+
+function friendlyError(error) {
+  const raw = String(error ?? "Неизвестная ошибка");
+  const text = raw.toLowerCase();
+
+  if (text.includes("pkexec") || text.includes("authorization") || text.includes("administrator") ||
+      text.includes("uac") || text.includes("отмен") || text.includes("canceled") ||
+      text.includes("cancelled") || text.includes("1223")) {
+    return "Не удалось получить права администратора. Подтвердите системный запрос и повторите попытку.";
+  }
+  if (text.includes("sha256") || text.includes("untrusted artifact") ||
+      text.includes("artifact error") || text.includes("integrity")) {
+    return "Проверка целостности встроенного runtime не пройдена. Переустановите приложение из официального пакета.";
+  }
+  if (text.includes("windivert") || text.includes("driver")) {
+    return "Не удалось запустить сетевой драйвер WinDivert. Перезапустите приложение и подтвердите запрос администратора.";
+  }
+  if (text.includes("nft") || text.includes("nfqueue")) {
+    return "Не удалось настроить Linux packet filter. Проверьте наличие nftables и права администратора.";
+  }
+  if (text.includes("pfctl") || text.includes("packet filter") || text.includes("utun")) {
+    return "Не удалось настроить сетевой фильтр macOS. Сетевые изменения были откатаны.";
+  }
+  if (text.includes("runtime state already exists") || text.includes("already active")) {
+    return "Сессия уже запущена или не была корректно завершена. Нажмите «Проверить» и затем повторите операцию.";
+  }
+  if (text.includes("встроенный профиль") || text.includes("runtime не найден") ||
+      text.includes("no such file") || text.includes("not found")) {
+    return "Встроенные файлы приложения не найдены. Переустановите полный desktop-пакет.";
+  }
+  return raw;
+}
+
 function addEvent(message, tone = "info") {
   const row = document.createElement("div");
   row.className = `event event-${tone}`;
@@ -126,9 +159,9 @@ async function refreshStatus({ log = false } = {}) {
   } catch (error) {
     running = false;
     if (profileAvailable) {
-      setVisualState("error", "Ошибка проверки", String(error));
+      setVisualState("error", "Ошибка проверки", friendlyError(error));
     }
-    if (log) addEvent(`Ошибка проверки: ${error}`, "error");
+    if (log) addEvent(`Ошибка проверки: ${friendlyError(error)}`, "error");
   } finally {
     updateToggle();
   }
@@ -150,8 +183,9 @@ async function toggleProtection() {
     }
     await refreshStatus();
   } catch (error) {
-    setVisualState("error", "Не удалось выполнить операцию", String(error));
-    addEvent(String(error), "error");
+    const message = friendlyError(error);
+    setVisualState("error", "Не удалось выполнить операцию", message);
+    addEvent(message, "error");
   } finally {
     busy = false;
     updateToggle();
@@ -169,7 +203,8 @@ try {
   await refreshStatus();
 } catch (error) {
   profileAvailable = false;
-  setVisualState("error", "Ошибка инициализации", String(error));
-  addEvent(String(error), "error");
+  const message = friendlyError(error);
+  setVisualState("error", "Ошибка инициализации", message);
+  addEvent(message, "error");
   updateToggle();
 }
