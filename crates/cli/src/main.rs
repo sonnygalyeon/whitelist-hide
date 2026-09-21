@@ -39,9 +39,7 @@ fn main() {
         [group, action, path] if group == "config" && action == "validate" => {
             config_validate(Path::new(path))
         }
-        [group, action] if group == "config" && action == "verify" => {
-            config_verify(&config_path())
-        }
+        [group, action] if group == "config" && action == "verify" => config_verify(&config_path()),
         [group, action, path] if group == "config" && action == "verify" => {
             config_verify(Path::new(path))
         }
@@ -149,8 +147,22 @@ fn print_verification(report: &VerificationReport) -> i32 {
     println!("actual platform:   {}", report.actual_platform);
     println!("expected SHA-256: {}", report.expected_sha256);
     println!("actual SHA-256:   {}", report.actual_sha256);
-    println!("integrity: {}", if report.integrity_ok() { "OK" } else { "FAILED" });
-    println!("platform: {}", if report.platform_ok() { "OK" } else { "MISMATCH" });
+    println!(
+        "integrity: {}",
+        if report.integrity_ok() {
+            "OK"
+        } else {
+            "FAILED"
+        }
+    );
+    println!(
+        "platform: {}",
+        if report.platform_ok() {
+            "OK"
+        } else {
+            "MISMATCH"
+        }
+    );
 
     if report.trusted() {
         println!("trust: VERIFIED");
