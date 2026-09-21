@@ -37,12 +37,7 @@ impl PlatformBackend for WindowsBackend {
         }
 
         let diagnostics = vec![
-            run_diag(
-                "whoami",
-                &["/user"],
-                "identity",
-                "Current Windows identity",
-            ),
+            run_diag("whoami", &["/user"], "identity", "Current Windows identity"),
             run_diag(
                 "route",
                 &["print", "0.0.0.0"],
