@@ -42,6 +42,9 @@ pub fn start_session(spec: &SessionSpec) -> Result<SessionReport, SessionError> 
     let paths = config.resolve_engine_paths(&spec.config_path);
 
     verify_dependencies(&paths.dependencies)?;
+    if Platform::detect() == Platform::Windows {
+        require_windows_dependencies(&paths.dependencies)?;
+    }
 
     let strategy = StrategyDefinition::load(&spec.strategy_path)
         .map_err(|error| SessionError::Strategy(error.to_string()))?;
@@ -103,6 +106,34 @@ fn verify_dependencies(
         }
     }
     Ok(())
+}
+
+
+fn require_windows_dependencies(
+    dependencies: &[whitelist_hide_core::config::ResolvedArtifactPaths],
+) -> Result<(), SessionError> {
+    let has_dll = dependencies.iter().any(|dependency| {
+        dependency
+            .binary
+            .extension()
+            .and_then(|value| value.to_str())
+            .is_some_and(|value| value.eq_ignore_ascii_case("dll"))
+    });
+    let has_sys = dependencies.iter().any(|dependency| {
+        dependency
+            .binary
+            .extension()
+            .and_then(|value| value.to_str())
+            .is_some_and(|value| value.eq_ignore_ascii_case("sys"))
+    });
+
+    if has_dll && has_sys {
+        Ok(())
+    } else {
+        Err(SessionError::Artifact(
+            "Windows engine requires trusted .dll and .sys driver dependencies".to_owned(),
+        ))
+    }
 }
 
 fn start_linux(
