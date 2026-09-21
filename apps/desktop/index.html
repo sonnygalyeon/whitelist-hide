@@ -1,16 +1,55 @@
 <!doctype html>
-<html lang="en">
+<html lang="ru">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>whitelist-hide</title>
+    <link rel="stylesheet" href="/src/styles.css" />
   </head>
   <body>
-    <main>
-      <h1>whitelist-hide</h1>
-      <p>Desktop shell is connected. Final interface design is intentionally pending.</p>
-      <button id="version" type="button">Read backend version</button>
-      <pre id="output"></pre>
+    <main class="shell">
+      <header>
+        <div>
+          <p class="eyebrow">whitelist-hide</p>
+          <h1>Сетевой backend</h1>
+        </div>
+        <span id="platform" class="pill">определение…</span>
+      </header>
+
+      <section class="hero">
+        <div>
+          <p class="label">Состояние</p>
+          <h2 id="state">Проверка системы…</h2>
+          <p id="summary">GUI работает без административных прав и показывает структурированное состояние backend.</p>
+        </div>
+        <button id="refresh" type="button">Обновить</button>
+      </section>
+
+      <section class="grid">
+        <article class="card">
+          <div class="card-title">
+            <h3>Диагностика</h3>
+            <span id="diag-count">0</span>
+          </div>
+          <div id="diagnostics" class="diagnostics"></div>
+        </article>
+
+        <article class="card">
+          <h3>План действий</h3>
+          <div class="actions">
+            <button data-action="start" type="button">Start</button>
+            <button data-action="stop" type="button">Stop</button>
+            <button data-action="cleanup" type="button">Cleanup</button>
+          </div>
+          <pre id="plan">Выберите действие. Применение сетевых изменений через GUI пока заблокировано release-gate.</pre>
+        </article>
+      </section>
+
+      <footer>
+        <span>Без телеметрии</span>
+        <span>Без произвольного shell</span>
+        <span id="version"></span>
+      </footer>
     </main>
     <script type="module" src="/src/main.js"></script>
   </body>
