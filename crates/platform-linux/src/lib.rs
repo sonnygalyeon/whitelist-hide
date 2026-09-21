@@ -38,7 +38,12 @@ impl PlatformBackend for LinuxBackend {
         }
 
         let diagnostics = vec![
-            run_diag("ip", &["route", "show", "default"], "default_route", "Default route"),
+            run_diag(
+                "ip",
+                &["route", "show", "default"],
+                "default_route",
+                "Default route",
+            ),
             run_diag("nft", &["list", "tables"], "nftables", "nftables"),
             run_diag("id", &["-u"], "privilege", "Current uid"),
             run_diag("uname", &["-r"], "kernel", "Kernel"),
@@ -68,11 +73,20 @@ impl PlatformBackend for LinuxBackend {
                 "Start Linux NFQUEUE backend",
                 false,
                 vec![
-                    step("verify", "Verify the userspace packet engine and configuration."),
-                    step("table", "Create only the dedicated inet whitelist_hide nftables table."),
+                    step(
+                        "verify",
+                        "Verify the userspace packet engine and configuration.",
+                    ),
+                    step(
+                        "table",
+                        "Create only the dedicated inet whitelist_hide nftables table.",
+                    ),
                     step("queue", "Attach only project-owned chains to NFQUEUE."),
                     step("engine", "Start the owned userspace engine."),
-                    step("health", "Verify queue and engine health; rollback on failure."),
+                    step(
+                        "health",
+                        "Verify queue and engine health; rollback on failure.",
+                    ),
                 ],
             ),
             BackendAction::Stop => plan(
@@ -80,7 +94,10 @@ impl PlatformBackend for LinuxBackend {
                 "Stop Linux NFQUEUE backend",
                 false,
                 vec![
-                    step("rules", "Remove only the inet whitelist_hide nftables table."),
+                    step(
+                        "rules",
+                        "Remove only the inet whitelist_hide nftables table.",
+                    ),
                     step("engine", "Stop only the recorded engine process."),
                     step("state", "Clear runtime state after cleanup."),
                 ],
