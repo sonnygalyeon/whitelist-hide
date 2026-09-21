@@ -1,0 +1,49 @@
+name: release-cli
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    strategy:
+      matrix:
+        include:
+          - os: ubuntu-latest
+            artifact: whitelist-hide-linux-x86_64
+            binary: target/release/whitelist-hide
+          - os: windows-latest
+            artifact: whitelist-hide-windows-x86_64.exe
+            binary: target/release/whitelist-hide.exe
+          - os: macos-latest
+            artifact: whitelist-hide-macos-arm64
+            binary: target/release/whitelist-hide
+
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Build CLI
+        run: cargo build --release -p whitelist-hide-cli
+
+      - name: Stage artifact (Unix)
+        if: runner.os != 'Windows'
+        run: cp "${{ matrix.binary }}" "${{ matrix.artifact }}"
+
+      - name: Stage artifact (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: Copy-Item "${{ matrix.binary }}" "${{ matrix.artifact }}"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}
+          path: ${{ matrix.artifact }}
