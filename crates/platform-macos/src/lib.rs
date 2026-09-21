@@ -74,9 +74,10 @@ impl CommandRunner for SystemCommandRunner {
                 source,
             })?;
 
-        let mut stdin = child.stdin.take().ok_or_else(|| MacOsError::Lifecycle(
-            format!("failed to open stdin for {program}"),
-        ))?;
+        let mut stdin = child
+            .stdin
+            .take()
+            .ok_or_else(|| MacOsError::Lifecycle(format!("failed to open stdin for {program}")))?;
         stdin
             .write_all(input)
             .map_err(|source| MacOsError::CommandIo {
@@ -522,9 +523,7 @@ impl Error for MacOsError {
     fn source(&self) -> Option<&(dyn Error + 'static)> {
         match self {
             Self::CommandIo { source, .. } => Some(source),
-            Self::CommandFailed { .. }
-            | Self::ActionUnavailable(_)
-            | Self::Lifecycle(_) => None,
+            Self::CommandFailed { .. } | Self::ActionUnavailable(_) | Self::Lifecycle(_) => None,
         }
     }
 }
