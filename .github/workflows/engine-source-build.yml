@@ -172,14 +172,18 @@ jobs:
             wget
 
       - name: Build static LuaJIT
+        env:
+          LUAJIT_RELEASE: 2.1-20250826
+          MINSIZE: -Os -flto=auto -ffunction-sections -fdata-sections
+          LDMINSIZE: -Wl,--gc-sections -flto=auto
         shell: C:\cygwin\bin\bash.exe -eo pipefail '{0}'
-        run: |
-          set -e
-          LUAJIT_RELEASE=2.1-20250826
-          wget -q "https://github.com/openresty/luajit2/archive/refs/tags/v${LUAJIT_RELEASE}.tar.gz"
-          tar -xzf "v${LUAJIT_RELEASE}.tar.gz"
-          make -C "luajit2-${LUAJIT_RELEASE}" BUILDMODE=static XCFLAGS="-DLUAJIT_USE_SYSMALLOC -DLUAJIT_DISABLE_FFI -ffat-lto-objects" TARGET_CFLAGS="-Os -flto=auto -ffunction-sections -fdata-sections" TARGET_LDFLAGS="-Wl,--gc-sections -flto=auto" -j$(nproc)
-          make -C "luajit2-${LUAJIT_RELEASE}" install
+        run: >-
+          export MAKEFLAGS=-j$(nproc) &&
+          wget -q https://github.com/openresty/luajit2/archive/refs/tags/v${LUAJIT_RELEASE}.tar.gz &&
+          tar -xzf v${LUAJIT_RELEASE}.tar.gz &&
+          rm -f v${LUAJIT_RELEASE}.tar.gz &&
+          make -C luajit2-${LUAJIT_RELEASE} BUILDMODE=static XCFLAGS="-DLUAJIT_USE_SYSMALLOC -DLUAJIT_DISABLE_FFI -ffat-lto-objects" TARGET_CFLAGS="$MINSIZE" TARGET_LDFLAGS="$LDMINSIZE" &&
+          make -C luajit2-${LUAJIT_RELEASE} install
 
       - name: Build winws2 from pinned source
         shell: C:\cygwin\bin\bash.exe -eo pipefail '{0}'
@@ -189,19 +193,15 @@ jobs:
           BUILD_TARGET: ${{ steps.upstream.outputs.build_target }}
           ARTIFACT: ${{ steps.upstream.outputs.artifact }}
           LICENSE_NAME: ${{ steps.upstream.outputs.license }}
-        run: |
-          set -e
-          make -C "upstream/$SUBDIR" "$BUILD_TARGET" CFLAGS="-DZAPRET_GH_HASH=$COMMIT"
-          test -f "upstream/$SUBDIR/$ARTIFACT"
-          mkdir -p dist/windows
-          cp "upstream/$SUBDIR/$ARTIFACT" dist/windows/
-          cp /usr/bin/cygwin1.dll dist/windows/
-          {
-            echo "source_commit=$COMMIT"
-            echo "license=$LICENSE_NAME"
-            echo "builder=github-actions/windows-latest"
-            echo "windivert=2.2.2"
-          } > dist/windows/PROVENANCE.txt
+        run: >-
+          export MAKEFLAGS=-j$(nproc) &&
+          export CFLAGS="-DZAPRET_GH_HASH=$COMMIT" &&
+          make -C "upstream/$SUBDIR" "$BUILD_TARGET" &&
+          test -f "upstream/$SUBDIR/$ARTIFACT" &&
+          mkdir -p dist/windows &&
+          cp "upstream/$SUBDIR/$ARTIFACT" dist/windows/ &&
+          cp /usr/bin/cygwin1.dll dist/windows/ &&
+          printf 'source_commit=%s\nlicense=%s\nbuilder=github-actions/windows-latest\nwindivert=2.2.2\n' "$COMMIT" "$LICENSE_NAME" > dist/windows/PROVENANCE.txt
 
       - name: Fetch pinned WinDivert runtime
         shell: pwsh
