@@ -9,7 +9,7 @@ use whitelist_hide_service::{
     DiagnosticItem, DiagnosticLevel, PlatformBackend,
 };
 
-pub const PF_ANCHOR: &str = "com.whitelisthide";
+pub const PF_ANCHOR: &str = "com.apple/whitelist-hide";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CommandOutput {
@@ -313,7 +313,7 @@ where
                     step(
                         "pf",
                         "Load routing rules only into the dedicated whitelist-hide pf anchor.",
-                        Some("/sbin/pfctl -a com.whitelisthide -f -"),
+                        Some("/sbin/pfctl -a com.apple/whitelist-hide -f -"),
                     ),
                     step(
                         "health",
@@ -332,7 +332,7 @@ where
                     step(
                         "pf",
                         "Remove only rules owned by whitelist-hide.",
-                        Some("/sbin/pfctl -a com.whitelisthide -F all"),
+                        Some("/sbin/pfctl -a com.apple/whitelist-hide -F all"),
                     ),
                     step(
                         "engine",
@@ -355,7 +355,7 @@ where
                 steps: vec![step(
                     "pf",
                     "Flush only the dedicated whitelist-hide pf anchor. Global pf state is not disabled or reset.",
-                    Some("/sbin/pfctl -a com.whitelisthide -F all"),
+                    Some("/sbin/pfctl -a com.apple/whitelist-hide -F all"),
                 )],
             }),
         }
