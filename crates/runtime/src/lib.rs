@@ -268,13 +268,7 @@ pub fn launch_verified_engine(
         args: args.to_vec(),
         env: Vec::new(),
     };
-    launch_verified_engine_with_options(
-        manifest_path,
-        binary_path,
-        &options,
-        store,
-        session_id,
-    )
+    launch_verified_engine_with_options(manifest_path, binary_path, &options, store, session_id)
 }
 
 pub fn launch_verified_engine_with_options(
@@ -382,7 +376,6 @@ pub fn launch_verified_engine_with_options(
         binary,
     })
 }
-
 
 fn validate_environment(env: &[(String, String)]) -> Result<(), EngineRuntimeError> {
     for (key, value) in env {
@@ -708,7 +701,6 @@ mod tests {
         assert_eq!(loaded, state);
         store.clear().expect("cleanup should succeed");
     }
-
 
     #[test]
     fn rejects_unsafe_environment_keys() {
