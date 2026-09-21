@@ -119,7 +119,7 @@ jobs:
           LICENSE_NAME: ${{ steps.upstream.outputs.license }}
         run: |
           set -euo pipefail
-          make -C "upstream/$SUBDIR"
+          make -C "upstream/$SUBDIR" CFLAGS="-static -std=gnu99 -Os -flto=auto -ffunction-sections -fdata-sections"
           test -x "upstream/$SUBDIR/$ARTIFACT"
           mkdir -p dist/linux
           cp "upstream/$SUBDIR/$ARTIFACT" "dist/linux/$ARTIFACT"
@@ -129,6 +129,13 @@ jobs:
             echo "license=$LICENSE_NAME"
             echo "builder=github-actions/ubuntu-latest"
           } > dist/linux/PROVENANCE.txt
+          if ldd "dist/linux/$ARTIFACT" > dist/linux/LDD.txt 2>&1; then
+            echo "nfqws unexpectedly has dynamic runtime dependencies"
+            cat dist/linux/LDD.txt
+            exit 1
+          fi
+          grep -Eq "not a dynamic executable|statically linked" dist/linux/LDD.txt
+          echo "linkage=static" >> dist/linux/PROVENANCE.txt
           file "dist/linux/$ARTIFACT"
 
       - name: Upload source-built Linux engine
