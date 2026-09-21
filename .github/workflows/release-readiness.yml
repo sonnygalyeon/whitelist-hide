@@ -52,5 +52,23 @@ jobs:
       - name: Build frontend
         working-directory: apps/desktop
         run: npm run build
+      - name: Build privileged helper
+        run: cargo build --release --locked -p whitelist-hide-helper
+      - name: Prepare helper sidecar on Unix
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          set -euo pipefail
+          target="$(rustc -vV | sed -n 's/^host: //p')"
+          mkdir -p apps/desktop/src-tauri/binaries
+          cp target/release/whitelist-hide-helper "apps/desktop/src-tauri/binaries/whitelist-hide-helper-$target"
+          chmod 0755 "apps/desktop/src-tauri/binaries/whitelist-hide-helper-$target"
+      - name: Prepare helper sidecar on Windows
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $target = (rustc -vV | Select-String '^host: ').Line.Substring(6)
+          New-Item -ItemType Directory -Force apps/desktop/src-tauri/binaries | Out-Null
+          Copy-Item target/release/whitelist-hide-helper.exe "apps/desktop/src-tauri/binaries/whitelist-hide-helper-$target.exe"
       - name: Check Tauri Rust application
         run: cargo check --manifest-path apps/desktop/src-tauri/Cargo.toml
