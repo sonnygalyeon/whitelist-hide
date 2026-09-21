@@ -3,6 +3,7 @@ use std::path::{Path, PathBuf};
 
 use whitelist_hide_core::artifact::{ArtifactManifest, VerificationReport, verify_file};
 use whitelist_hide_core::config::AppConfig;
+use whitelist_hide_core::strategy::StrategyDefinition;
 use whitelist_hide_core::{DoctorReport, Platform};
 use whitelist_hide_linux::LinuxBackend;
 use whitelist_hide_macos::MacOsBackend;
@@ -60,6 +61,9 @@ fn main() {
         }
         [group, action, manifest, binary] if group == "engine" && action == "verify" => {
             engine_verify(Path::new(manifest), Path::new(binary))
+        }
+        [group, action, path] if group == "strategy" && action == "validate" => {
+            strategy_validate(Path::new(path))
         }
         [group, platform, action] if group == "backend" && action == "inspect" => {
             backend_inspect(platform)
@@ -294,6 +298,27 @@ fn print_action_plan(plan: &ActionPlan) {
     }
 }
 
+
+fn strategy_validate(path: &Path) -> i32 {
+    match StrategyDefinition::load(path) {
+        Ok(strategy) => {
+            println!("strategy: OK");
+            println!("id: {}", strategy.id);
+            println!("tcp ranges: {}", strategy.filters.tcp_ports.len());
+            println!("udp ranges: {}", strategy.filters.udp_ports.len());
+            println!("domain lists: {}", strategy.filters.domain_lists.len());
+            println!("ip lists: {}", strategy.filters.ip_lists.len());
+            println!("desync stages: {}", strategy.desync.len());
+            0
+        }
+        Err(error) => {
+            eprintln!("strategy: INVALID");
+            eprintln!("reason: {error}");
+            2
+        }
+    }
+}
+
 fn config_validate(path: &Path) -> i32 {
     match AppConfig::load(path) {
         Ok(config) => {
@@ -432,7 +457,7 @@ fn runtime_state_path() -> PathBuf {
 
 fn help() {
     println!(
-        "whitelist-hide {}\n\nUSAGE:\n    whitelist-hide <COMMAND>\n\nCOMMANDS:\n    doctor\n        Read-only platform diagnostics\n\n    status\n        Show state from the runtime ownership journal\n\n    runtime state-path\n        Show the default runtime journal path\n\n    runtime show [PATH]\n        Read and validate a runtime journal\n\n    config-path\n        Show the default configuration path\n\n    config validate [PATH]\n        Validate a TOML configuration without touching the network\n\n    config verify [PATH]\n        Validate configuration and verify its engine artifact\n\n    engine verify <MANIFEST> <BINARY>\n        Verify artifact SHA-256 and platform against its manifest\n\n    backend <macos|windows|linux> inspect\n        Inspect host prerequisites and current backend state\n\n    backend <macos|windows|linux> plan <start|stop|cleanup>\n        Print a structured action plan without applying it\n\n    backend macos cleanup --apply\n        Flush only the whitelist-hide pf anchor (requires privileges)\n\n    version\n        Show version\n\n    help\n        Show this help",
+        "whitelist-hide {}\n\nUSAGE:\n    whitelist-hide <COMMAND>\n\nCOMMANDS:\n    doctor\n        Read-only platform diagnostics\n\n    status\n        Show state from the runtime ownership journal\n\n    runtime state-path\n        Show the default runtime journal path\n\n    runtime show [PATH]\n        Read and validate a runtime journal\n\n    config-path\n        Show the default configuration path\n\n    config validate [PATH]\n        Validate a TOML configuration without touching the network\n\n    config verify [PATH]\n        Validate configuration and verify its engine artifact\n\n    engine verify <MANIFEST> <BINARY>\n        Verify artifact SHA-256 and platform against its manifest\n\n    strategy validate <PATH>\n        Validate a structured strategy without executing it\n\n    backend <macos|windows|linux> inspect\n        Inspect host prerequisites and current backend state\n\n    backend <macos|windows|linux> plan <start|stop|cleanup>\n        Print a structured action plan without applying it\n\n    backend macos cleanup --apply\n        Flush only the whitelist-hide pf anchor (requires privileges)\n\n    version\n        Show version\n\n    help\n        Show this help",
         env!("CARGO_PKG_VERSION")
     );
 }
