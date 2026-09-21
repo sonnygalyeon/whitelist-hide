@@ -217,8 +217,14 @@ mod tests {
         assert_eq!(
             format_ports(&[
                 PortRange { start: 80, end: 80 },
-                PortRange { start: 443, end: 443 },
-                PortRange { start: 5000, end: 5010 },
+                PortRange {
+                    start: 443,
+                    end: 443,
+                },
+                PortRange {
+                    start: 5000,
+                    end: 5010,
+                },
             ]),
             "80,443,5000-5010"
         );
@@ -255,8 +261,8 @@ positions = [2, 1]
         )
         .expect("parse strategy");
 
-        let plan = compile_strategy(&strategy, &root.join("strategy.toml"))
-            .expect("compile strategy");
+        let plan =
+            compile_strategy(&strategy, &root.join("strategy.toml")).expect("compile strategy");
 
         assert!(plan.arguments.contains(&"--filter-tcp=443".to_owned()));
         assert!(plan.arguments.contains(&"--filter-udp=443".to_owned()));
