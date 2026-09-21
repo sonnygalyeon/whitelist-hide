@@ -31,8 +31,7 @@ jobs:
         shell: bash
         run: |
           echo WHITELIST_HIDE_LOCK_BEGIN
-          base64 -w 0 Cargo.lock
-          echo
+          cat Cargo.lock
           echo WHITELIST_HIDE_LOCK_END
 
   desktop-check:
