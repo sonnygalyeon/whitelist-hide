@@ -71,8 +71,14 @@ impl PlatformBackend for WindowsBackend {
         ensure_windows()?;
         let steps = match action {
             BackendAction::Start => vec![
-                step("verify", "Verify engine and WinDivert artifacts before loading them."),
-                step("driver", "Install/start only the pinned WinDivert driver version."),
+                step(
+                    "verify",
+                    "Verify engine and WinDivert artifacts before loading them.",
+                ),
+                step(
+                    "driver",
+                    "Install/start only the pinned WinDivert driver version.",
+                ),
                 step("engine", "Start the verified engine and record its PID."),
                 step("health", "Run health checks and rollback on failure."),
             ],
