@@ -1,21 +1,15 @@
 [package]
-name = "whitelist-hide-cli"
+name = "whitelist-hide-controller"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 
-[[bin]]
-name = "whitelist-hide"
-path = "src/main.rs"
-
 [dependencies]
 whitelist-hide-core = { path = "../core" }
-whitelist-hide-controller = { path = "../controller" }
 whitelist-hide-runtime = { path = "../runtime" }
-whitelist-hide-service = { path = "../service" }
 whitelist-hide-macos = { path = "../platform-macos" }
-whitelist-hide-windows = { path = "../platform-windows" }
 whitelist-hide-linux = { path = "../platform-linux" }
+whitelist-hide-windows = { path = "../platform-windows" }
 
 [lints]
 workspace = true

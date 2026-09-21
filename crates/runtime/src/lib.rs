@@ -35,6 +35,8 @@ pub struct RuntimeState {
     pub engine_binary: Option<PathBuf>,
     pub owned_interface: Option<String>,
     pub owned_firewall_scope: Option<String>,
+    #[serde(default)]
+    pub owned_firewall_token: Option<String>,
     pub previous_tcp_keepinit: Option<u32>,
 }
 
@@ -50,6 +52,7 @@ impl RuntimeState {
             engine_binary: None,
             owned_interface: None,
             owned_firewall_scope: None,
+            owned_firewall_token: None,
             previous_tcp_keepinit: None,
         }
     }
@@ -94,6 +97,14 @@ impl RuntimeState {
             if !safe_token(scope) {
                 return Err(RuntimeStateError::InvalidState(
                     "owned_firewall_scope contains unsupported characters".to_owned(),
+                ));
+            }
+        }
+
+        if let Some(token) = &self.owned_firewall_token {
+            if token.is_empty() || !token.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+                return Err(RuntimeStateError::InvalidState(
+                    "owned_firewall_token must be hexadecimal".to_owned(),
                 ));
             }
         }
