@@ -121,10 +121,17 @@ impl StrategyDefinition {
             ));
         }
 
-        if self.desync.len() == 2 && !matches!(self.desync[0], DesyncStage::Fake { .. }) {
-            return Err(StrategyError::Invalid(
-                "two-stage profiles currently require fake as the first stage".to_owned(),
-            ));
+        if self.desync.len() == 2 {
+            if !matches!(self.desync[0], DesyncStage::Fake { .. }) {
+                return Err(StrategyError::Invalid(
+                    "two-stage profiles currently require fake as the first stage".to_owned(),
+                ));
+            }
+            if matches!(self.desync[1], DesyncStage::Fake { .. }) {
+                return Err(StrategyError::Invalid(
+                    "fake cannot be used as the second desync stage".to_owned(),
+                ));
+            }
         }
 
         for stage in &self.desync {
@@ -205,10 +212,10 @@ impl StrategyDefinition {
         }
 
         for relative in &self.filters.domain_lists {
-            args.push(path_argument("--hostlist=@", &base.join(relative)));
+            args.push(path_argument("--hostlist=", &base.join(relative)));
         }
         for relative in &self.filters.ip_lists {
-            args.push(path_argument("--ipset=@", &base.join(relative)));
+            args.push(path_argument("--ipset=", &base.join(relative)));
         }
 
         let modes = self
@@ -236,9 +243,7 @@ impl StrategyDefinition {
                     )));
                 }
                 DesyncStage::FakeSplit { position } => {
-                    args.push(OsString::from(format!(
-                        "--dpi-desync-split-pos={position}"
-                    )));
+                    args.push(OsString::from(format!("--dpi-desync-split-pos={position}")));
                 }
                 DesyncStage::UdpLength { increment } => {
                     args.push(OsString::from(format!(
@@ -428,7 +433,10 @@ positions = [1, 2]
     fn formats_pf_ranges() {
         assert_eq!(
             pf_port_list(&[
-                PortRange { start: 443, end: 443 },
+                PortRange {
+                    start: 443,
+                    end: 443,
+                },
                 PortRange {
                     start: 50000,
                     end: 50100,
