@@ -197,7 +197,11 @@ impl fmt::Display for CompileError {
             }
             Self::InvalidStrategy(message) => f.write_str(message),
             Self::Io { path, source } => {
-                write!(f, "failed to resolve strategy path {}: {source}", path.display())
+                write!(
+                    f,
+                    "failed to resolve strategy path {}: {source}",
+                    path.display()
+                )
             }
         }
     }
