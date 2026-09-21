@@ -4,13 +4,28 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>whitelist-hide</title>
+    <style>
+      body { font-family: system-ui, sans-serif; max-width: 900px; margin: 40px auto; padding: 0 20px; }
+      .row { display: grid; grid-template-columns: 160px 1fr; gap: 12px; margin: 12px 0; }
+      input { padding: 8px; }
+      button { margin: 6px 6px 6px 0; padding: 8px 14px; }
+      pre { min-height: 180px; padding: 16px; background: #111; color: #eee; overflow: auto; }
+    </style>
   </head>
   <body>
     <main>
       <h1>whitelist-hide</h1>
-      <p>Desktop shell is connected. Final interface design is intentionally pending.</p>
-      <button id="version" type="button">Read backend version</button>
-      <pre id="output"></pre>
+      <p>Release-candidate control surface. Final visual design is intentionally separate from backend validation.</p>
+      <div class="row"><label for="config">Config</label><input id="config" placeholder="/path/to/config.toml" /></div>
+      <div class="row"><label for="strategy">Strategy</label><input id="strategy" placeholder="/path/to/strategy.toml" /></div>
+      <div>
+        <button id="version" type="button">Version</button>
+        <button id="status" type="button">Status</button>
+        <button id="preview" type="button">Preview strategy</button>
+        <button id="start" type="button">Start</button>
+        <button id="stop" type="button">Stop</button>
+      </div>
+      <pre id="output">Ready.</pre>
     </main>
     <script type="module" src="/src/main.js"></script>
   </body>
