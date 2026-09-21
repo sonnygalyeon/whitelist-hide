@@ -72,8 +72,8 @@ pub fn inspect_network_snapshot() -> Result<MacNetworkSnapshot, MacOsError> {
             source,
         })?;
     let pf_text = String::from_utf8_lossy(&pf.stdout);
-    let pf_was_enabled = parse_pf_status(&pf_text)
-        .is_some_and(|status| status.starts_with("Enabled"));
+    let pf_was_enabled =
+        parse_pf_status(&pf_text).is_some_and(|status| status.starts_with("Enabled"));
 
     Ok(MacNetworkSnapshot {
         interface,
@@ -176,17 +176,24 @@ pub fn install_pf_routes(
             source,
         })?;
 
-    let output = child.wait_with_output().map_err(|source| MacOsError::CommandIo {
-        program: "/sbin/pfctl".to_owned(),
-        source,
-    })?;
+    let output = child
+        .wait_with_output()
+        .map_err(|source| MacOsError::CommandIo {
+            program: "/sbin/pfctl".to_owned(),
+            source,
+        })?;
 
     if output.status.success() {
         Ok(())
     } else {
         Err(MacOsError::CommandFailed {
             program: "/sbin/pfctl".to_owned(),
-            args: vec!["-a".to_owned(), PF_ANCHOR.to_owned(), "-f".to_owned(), "-".to_owned()],
+            args: vec![
+                "-a".to_owned(),
+                PF_ANCHOR.to_owned(),
+                "-f".to_owned(),
+                "-".to_owned(),
+            ],
             code: output.status.code(),
             stderr: String::from_utf8_lossy(&output.stderr).trim().to_owned(),
         })
@@ -276,7 +283,6 @@ fn parse_pf_token(text: &str) -> Option<String> {
         None
     })
 }
-
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CommandOutput {
@@ -779,8 +785,17 @@ mod tests {
     #[test]
     fn pf_plan_is_scoped_to_owned_utun() {
         let rules = pf_rules(
-            &[PortRange { start: 80, end: 80 }, PortRange { start: 443, end: 443 }],
-            &[PortRange { start: 443, end: 443 }],
+            &[
+                PortRange { start: 80, end: 80 },
+                PortRange {
+                    start: 443,
+                    end: 443,
+                },
+            ],
+            &[PortRange {
+                start: 443,
+                end: 443,
+            }],
         );
         assert!(rules.contains("route-to (utun50 10.77.0.2)"));
         assert!(rules.contains("proto tcp"));
