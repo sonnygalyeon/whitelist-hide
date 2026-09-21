@@ -82,6 +82,28 @@ def check_upstream_lock() -> list[str]:
             if not driver.get(key):
                 failures.append(f"windows_driver.{key} metadata is missing")
 
+    linux_static = data.get("linux_static")
+    if not isinstance(linux_static, dict):
+        failures.append("missing upstream lock section: linux_static")
+    else:
+        for name in ("libmnl", "libnfnetlink", "libnetfilter_queue"):
+            entry = linux_static.get(name)
+            if not isinstance(entry, dict):
+                failures.append(f"missing linux_static dependency: {name}")
+                continue
+            if entry.get("status") != "pinned-tarball-verified":
+                failures.append(f"linux_static.{name} is not pinned and verified")
+            digest = entry.get("sha256", "")
+            if (
+                not isinstance(digest, str)
+                or len(digest) != 64
+                or any(char not in "0123456789abcdef" for char in digest)
+            ):
+                failures.append(f"linux_static.{name}.sha256 is invalid")
+            url = entry.get("asset_url", "")
+            if not isinstance(url, str) or not url.startswith("https://www.netfilter.org/pub/"):
+                failures.append(f"linux_static.{name}.asset_url must use netfilter.org HTTPS")
+
     return failures
 
 
@@ -96,6 +118,7 @@ def main() -> int:
     print("tracked opaque binaries: none")
     print("source-build metadata: macOS/Linux/Windows enabled")
     print("WinDivert release metadata and SHA-256: pinned")
+    print("Linux static Netfilter dependency tarballs: pinned and SHA-256 verified")
     return 0
 
 
