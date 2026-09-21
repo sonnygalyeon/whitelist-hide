@@ -12,7 +12,10 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
+serde = { version = "1", features = ["derive"] }
 tauri = { version = "2", features = [] }
-whitelist-hide-service = { path = "../../../crates/service" }
+whitelist-hide-core = { path = "../../../crates/core" }
+whitelist-hide-runtime = { path = "../../../crates/runtime" }
+whitelist-hide-orchestrator = { path = "../../../crates/orchestrator" }
 
 [workspace]
