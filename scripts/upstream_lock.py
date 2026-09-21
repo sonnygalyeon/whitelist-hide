@@ -71,6 +71,10 @@ def main() -> int:
         f"status={target['status']}",
     ]
 
+    expected_sha256 = target.get("expected_sha256")
+    if isinstance(expected_sha256, str) and expected_sha256:
+        lines.append(f"expected_sha256={expected_sha256}")
+
     if args.target == "windows":
         for key in (
             "windivert_version",
@@ -78,6 +82,8 @@ def main() -> int:
             "windivert_archive_sha256",
             "windivert_dll_sha256",
             "windivert_sys_sha256",
+            "winws_sha256",
+            "cygwin1_sha256",
         ):
             value = target.get(key)
             if not isinstance(value, str) or not value:
