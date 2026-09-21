@@ -147,7 +147,7 @@ fn elevated_output(_helper: &Path, _action: &str) -> Result<Output, String> {
 
 #[cfg(target_os = "macos")]
 fn shell_single_quote(path: &Path) -> String {
-    let value = path.display().to_string().replace(''', "'\\''");
+    let value = path.display().to_string().replace("'", "'\\''");
     format!("'{value}'")
 }
 
@@ -158,7 +158,7 @@ fn applescript_escape(value: &str) -> String {
 
 #[cfg(target_os = "windows")]
 fn powershell_single_quote(value: &str) -> String {
-    format!("'{}'", value.replace(''', "''"))
+    format!("'{}'", value.replace("'", "''"))
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
