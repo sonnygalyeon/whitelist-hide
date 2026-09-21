@@ -79,6 +79,10 @@ jobs:
         working-directory: apps/desktop
         run: npm install
 
+      - name: Generate platform icons
+        working-directory: apps/desktop
+        run: npm run tauri icon app-icon.svg
+
       - name: Build frontend
         working-directory: apps/desktop
         run: npm run build
