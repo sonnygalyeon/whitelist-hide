@@ -45,11 +45,11 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          python3 scripts/upstream_lock.py linux --github-output "$GITHUB_OUTPUT"
-          REPO="$(python3 scripts/upstream_lock.py linux --field repository)"
-          COMMIT="$(python3 scripts/upstream_lock.py linux --field commit)"
-          SUBDIR="$(python3 scripts/upstream_lock.py linux --field subdir)"
-          ARTIFACT="$(python3 scripts/upstream_lock.py linux --field artifact)"
+          eval "$(python3 scripts/upstream_lock.py linux)"
+          REPO="$repository"
+          COMMIT="$commit"
+          SUBDIR="$subdir"
+          ARTIFACT="$artifact"
           git init upstream
           git -C upstream remote add origin "$REPO"
           git -C upstream fetch --depth 1 origin "$COMMIT"
@@ -129,10 +129,11 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          REPO="$(python3 scripts/upstream_lock.py macos --field repository)"
-          COMMIT="$(python3 scripts/upstream_lock.py macos --field commit)"
-          SUBDIR="$(python3 scripts/upstream_lock.py macos --field subdir)"
-          ARTIFACT="$(python3 scripts/upstream_lock.py macos --field artifact)"
+          eval "$(python3 scripts/upstream_lock.py macos)"
+          REPO="$repository"
+          COMMIT="$commit"
+          SUBDIR="$subdir"
+          ARTIFACT="$artifact"
           git init upstream
           git -C upstream remote add origin "$REPO"
           git -C upstream fetch --depth 1 origin "$COMMIT"
