@@ -54,6 +54,7 @@ pub fn compile_strategy(
         .map_err(|error| CompileError::InvalidStrategy(error.to_string()))?;
 
     let base = strategy_path.parent().unwrap_or_else(|| Path::new("."));
+    let common = compile_common_args(strategy, base)?;
     let mut args = Vec::new();
 
     if !strategy.filters.tcp_ports.is_empty() {
@@ -61,6 +62,7 @@ pub fn compile_strategy(
             "--filter-tcp={}",
             format_port_ranges(&strategy.filters.tcp_ports)
         ));
+        args.extend(common.iter().cloned());
     }
 
     if !strategy.filters.udp_ports.is_empty() {
@@ -71,7 +73,17 @@ pub fn compile_strategy(
             "--filter-udp={}",
             format_port_ranges(&strategy.filters.udp_ports)
         ));
+        args.extend(common);
     }
+
+    Ok(CompiledStrategy { engine, args })
+}
+
+fn compile_common_args(
+    strategy: &StrategyDefinition,
+    base: &Path,
+) -> Result<Vec<String>, CompileError> {
+    let mut args = Vec::new();
 
     for list in &strategy.filters.domain_lists {
         args.push(format!(
@@ -88,8 +100,7 @@ pub fn compile_strategy(
     }
 
     compile_desync(&strategy.desync, &mut args)?;
-
-    Ok(CompiledStrategy { engine, args })
+    Ok(args)
 }
 
 fn compile_desync(stages: &[DesyncStage], args: &mut Vec<String>) -> Result<(), CompileError> {
@@ -252,10 +263,13 @@ positions = [2, 1]
         assert_eq!(compiled.args[0], "--filter-tcp=80,443");
         assert!(compiled.args.contains(&"--new".to_owned()));
         assert!(compiled.args.contains(&"--filter-udp=443".to_owned()));
-        assert!(
+        assert_eq!(
             compiled
                 .args
-                .contains(&"--dpi-desync=fake,multisplit".to_owned())
+                .iter()
+                .filter(|arg| *arg == "--dpi-desync=fake,multisplit")
+                .count(),
+            2
         );
         assert!(
             compiled
