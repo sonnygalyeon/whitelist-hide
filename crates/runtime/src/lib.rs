@@ -35,6 +35,8 @@ pub struct RuntimeState {
     pub engine_binary: Option<PathBuf>,
     pub owned_interface: Option<String>,
     pub owned_firewall_scope: Option<String>,
+    #[serde(default)]
+    pub backend_token: Option<String>,
     pub previous_tcp_keepinit: Option<u32>,
 }
 
@@ -50,6 +52,7 @@ impl RuntimeState {
             engine_binary: None,
             owned_interface: None,
             owned_firewall_scope: None,
+            backend_token: None,
             previous_tcp_keepinit: None,
         }
     }
@@ -94,6 +97,14 @@ impl RuntimeState {
             if !safe_token(scope) {
                 return Err(RuntimeStateError::InvalidState(
                     "owned_firewall_scope contains unsupported characters".to_owned(),
+                ));
+            }
+        }
+
+        if let Some(token) = &self.backend_token {
+            if !safe_token(token) {
+                return Err(RuntimeStateError::InvalidState(
+                    "backend_token contains unsupported characters".to_owned(),
                 ));
             }
         }
