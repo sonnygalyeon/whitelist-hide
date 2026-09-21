@@ -29,3 +29,12 @@ build_target = "cygwin64"
 license = "MIT"
 license_path = "docs/LICENSE.txt"
 status = "source-build-enabled"
+
+[windows_driver]
+repository = "https://github.com/basil00/WinDivert.git"
+commit = "1789526ecfb9ff5397c94f9f54c1a3dc2fb60440"
+version = "2.2.2"
+license = "LGPL-3.0-only OR GPL-2.0-only"
+asset_url = "https://github.com/basil00/WinDivert/releases/download/v2.2.2/WinDivert-2.2.2-A.zip"
+sha256 = "63cb41763bb4b20f600b6de04e991a9c2be73279e317d4d82f237b150c5f3f15"
+status = "pinned-release-verified"
