@@ -18,7 +18,207 @@ permissions:
 
 jobs:
   engines:
-    uses: ./.github/workflows/engine-source-build.yml
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            name: linux
+            artifact: source-built-linux-nfqws
+            output: dist/linux
+          - os: macos-latest
+            name: macos
+            artifact: source-built-macos-utunws
+            output: dist/macos
+          - os: windows-latest
+            name: windows
+            artifact: source-built-windows-winws2
+            output: dist/windows
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Read pinned Unix upstream
+        if: runner.os != 'Windows'
+        id: upstream-unix
+        shell: bash
+        run: python3 scripts/upstream_lock.py "${{ matrix.name }}" --github-output "$GITHUB_OUTPUT"
+
+      - name: Read pinned Windows upstream
+        if: runner.os == 'Windows'
+        id: upstream-windows
+        shell: pwsh
+        run: python scripts/upstream_lock.py windows --github-output "$env:GITHUB_OUTPUT"
+
+      - name: Fetch exact Unix upstream commit
+        if: runner.os != 'Windows'
+        shell: bash
+        env:
+          REPOSITORY: ${{ steps.upstream-unix.outputs.repository }}
+          COMMIT: ${{ steps.upstream-unix.outputs.commit }}
+          LICENSE_PATH: ${{ steps.upstream-unix.outputs.license_path }}
+        run: |
+          set -euo pipefail
+          git init upstream
+          git -C upstream remote add origin "$REPOSITORY"
+          git -C upstream fetch --depth 1 origin "$COMMIT"
+          test "$(git -C upstream rev-parse FETCH_HEAD)" = "$COMMIT"
+          git -C upstream checkout --detach "$COMMIT"
+          test "$(git -C upstream rev-parse HEAD)" = "$COMMIT"
+          test -f "upstream/$LICENSE_PATH"
+
+      - name: Fetch exact Windows upstream commit
+        if: runner.os == 'Windows'
+        shell: pwsh
+        env:
+          REPOSITORY: ${{ steps.upstream-windows.outputs.repository }}
+          COMMIT: ${{ steps.upstream-windows.outputs.commit }}
+          LICENSE_PATH: ${{ steps.upstream-windows.outputs.license_path }}
+        run: |
+          git init upstream
+          git -C upstream remote add origin "$env:REPOSITORY"
+          git -C upstream fetch --depth 1 origin "$env:COMMIT"
+          if ((git -C upstream rev-parse FETCH_HEAD) -ne "$env:COMMIT") { throw "unexpected FETCH_HEAD" }
+          git -C upstream checkout --detach "$env:COMMIT"
+          if ((git -C upstream rev-parse HEAD) -ne "$env:COMMIT") { throw "unexpected HEAD" }
+          if (-not (Test-Path "upstream/$env:LICENSE_PATH")) { throw "license file missing" }
+
+      - name: Install Linux engine dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends build-essential zlib1g-dev libnetfilter-queue-dev libnfnetlink-dev libmnl-dev libcap-dev
+
+      - name: Build Linux nfqws
+        if: runner.os == 'Linux'
+        shell: bash
+        env:
+          COMMIT: ${{ steps.upstream-unix.outputs.commit }}
+          SUBDIR: ${{ steps.upstream-unix.outputs.subdir }}
+          ARTIFACT: ${{ steps.upstream-unix.outputs.artifact }}
+          LICENSE_NAME: ${{ steps.upstream-unix.outputs.license }}
+        run: |
+          set -euo pipefail
+          make -C "upstream/$SUBDIR"
+          test -x "upstream/$SUBDIR/$ARTIFACT"
+          mkdir -p dist/linux
+          cp "upstream/$SUBDIR/$ARTIFACT" "dist/linux/$ARTIFACT"
+          sha256sum "dist/linux/$ARTIFACT" > dist/linux/SHA256SUMS
+          {
+            echo "source_commit=$COMMIT"
+            echo "license=$LICENSE_NAME"
+            echo "builder=github-actions/ubuntu-latest"
+          } > dist/linux/PROVENANCE.txt
+          ldd "dist/linux/$ARTIFACT" | tee dist/linux/LDD.txt
+
+      - name: Build macOS utunws
+        if: runner.os == 'macOS'
+        shell: bash
+        env:
+          COMMIT: ${{ steps.upstream-unix.outputs.commit }}
+          SUBDIR: ${{ steps.upstream-unix.outputs.subdir }}
+          ARTIFACT: ${{ steps.upstream-unix.outputs.artifact }}
+          BUILD_TARGET: ${{ steps.upstream-unix.outputs.build_target }}
+          LICENSE_NAME: ${{ steps.upstream-unix.outputs.license }}
+        run: |
+          set -euo pipefail
+          export SDKROOT="$(xcrun --sdk macosx --show-sdk-path)"
+          make -C "upstream/$SUBDIR" "$BUILD_TARGET"
+          test -x "upstream/$SUBDIR/$ARTIFACT"
+          mkdir -p dist/macos
+          cp "upstream/$SUBDIR/$ARTIFACT" "dist/macos/$ARTIFACT"
+          shasum -a 256 "dist/macos/$ARTIFACT" > dist/macos/SHA256SUMS
+          {
+            echo "source_commit=$COMMIT"
+            echo "license=$LICENSE_NAME"
+            echo "builder=github-actions/macos-latest"
+          } > dist/macos/PROVENANCE.txt
+
+      - name: Set up Cygwin
+        if: runner.os == 'Windows'
+        uses: cygwin/cygwin-install-action@v4
+        with:
+          platform: x86_64
+          site: http://ctm.crouchingtigerhiddenfruitbat.org/pub/cygwin/circa/64bit/2024/01/30/231215
+          check-sig: 'false'
+          packages: >-
+            gcc-core
+            make
+            zlib-devel
+            wget
+
+      - name: Build static LuaJIT
+        if: runner.os == 'Windows'
+        env:
+          LUAJIT_RELEASE: 2.1-20250826
+          MINSIZE: -Os -flto=auto -ffunction-sections -fdata-sections
+          LDMINSIZE: -Wl,--gc-sections -flto=auto
+        shell: C:\cygwin\bin\bash.exe -eo pipefail '{0}'
+        run: >-
+          export MAKEFLAGS=-j$(nproc) &&
+          wget -q https://github.com/openresty/luajit2/archive/refs/tags/v${LUAJIT_RELEASE}.tar.gz &&
+          tar -xzf v${LUAJIT_RELEASE}.tar.gz &&
+          rm -f v${LUAJIT_RELEASE}.tar.gz &&
+          make -C luajit2-${LUAJIT_RELEASE} BUILDMODE=static XCFLAGS="-DLUAJIT_USE_SYSMALLOC -DLUAJIT_DISABLE_FFI -ffat-lto-objects" TARGET_CFLAGS="$MINSIZE" TARGET_LDFLAGS="$LDMINSIZE" &&
+          make -C luajit2-${LUAJIT_RELEASE} install
+
+      - name: Build Windows winws2
+        if: runner.os == 'Windows'
+        shell: C:\cygwin\bin\bash.exe -eo pipefail '{0}'
+        env:
+          COMMIT: ${{ steps.upstream-windows.outputs.commit }}
+          SUBDIR: ${{ steps.upstream-windows.outputs.subdir }}
+          BUILD_TARGET: ${{ steps.upstream-windows.outputs.build_target }}
+          ARTIFACT: ${{ steps.upstream-windows.outputs.artifact }}
+          LICENSE_NAME: ${{ steps.upstream-windows.outputs.license }}
+        run: >-
+          export MAKEFLAGS=-j$(nproc) &&
+          export CFLAGS="-DZAPRET_GH_HASH=$COMMIT" &&
+          make -C "upstream/$SUBDIR" "$BUILD_TARGET" &&
+          test -f "upstream/$SUBDIR/$ARTIFACT" &&
+          mkdir -p dist/windows &&
+          cp "upstream/$SUBDIR/$ARTIFACT" dist/windows/ &&
+          cp /usr/bin/cygwin1.dll dist/windows/ &&
+          printf 'source_commit=%s\nlicense=%s\nbuilder=github-actions/windows-latest\n' "$COMMIT" "$LICENSE_NAME" > dist/windows/PROVENANCE.txt
+
+      - name: Read pinned WinDivert release
+        if: runner.os == 'Windows'
+        id: windivert
+        shell: pwsh
+        run: python scripts/windivert_lock.py --github-output "$env:GITHUB_OUTPUT"
+
+      - name: Fetch and verify WinDivert
+        if: runner.os == 'Windows'
+        shell: pwsh
+        env:
+          ASSET_URL: ${{ steps.windivert.outputs.asset_url }}
+          EXPECTED_SHA256: ${{ steps.windivert.outputs.sha256 }}
+          WINDIVERT_VERSION: ${{ steps.windivert.outputs.version }}
+          WINDIVERT_COMMIT: ${{ steps.windivert.outputs.commit }}
+          WINDIVERT_LICENSE: ${{ steps.windivert.outputs.license }}
+        run: |
+          Invoke-WebRequest -Uri "$env:ASSET_URL" -OutFile WinDivert.zip
+          $actual = (Get-FileHash WinDivert.zip -Algorithm SHA256).Hash.ToLowerInvariant()
+          if ($actual -ne "$env:EXPECTED_SHA256") { throw "WinDivert archive SHA-256 mismatch" }
+          Expand-Archive WinDivert.zip -DestinationPath WinDivert
+          $root = "WinDivert/WinDivert-$env:WINDIVERT_VERSION-A"
+          Copy-Item "$root/x64/WinDivert.dll" dist/windows/WinDivert.dll
+          Copy-Item "$root/x64/WinDivert64.sys" dist/windows/WinDivert64.sys
+          Add-Content dist/windows/PROVENANCE.txt "windivert_commit=$env:WINDIVERT_COMMIT"
+          Add-Content dist/windows/PROVENANCE.txt "windivert_license=$env:WINDIVERT_LICENSE"
+          Add-Content dist/windows/PROVENANCE.txt "windivert_archive_sha256=$env:EXPECTED_SHA256"
+          Get-ChildItem dist/windows -File | Where-Object { $_.Name -ne "PROVENANCE.txt" } | ForEach-Object {
+            $hash = (Get-FileHash $_.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
+            "$hash  $($_.Name)"
+          } | Set-Content -Encoding ascii dist/windows/SHA256SUMS
+
+      - name: Upload engine bundle
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}
+          path: ${{ matrix.output }}/
+          if-no-files-found: error
 
   bundle:
     needs: engines
@@ -54,7 +254,7 @@ jobs:
         working-directory: apps/desktop
         run: npm ci
 
-      - name: Download verified source-built engine bundle
+      - name: Download source-built engine bundle
         uses: actions/download-artifact@v4
         with:
           name: ${{ matrix.engine_artifact }}
@@ -72,21 +272,16 @@ jobs:
           $target = (rustc -vV | Select-String '^host: ').Line.Substring(6)
           "TARGET_TRIPLE=$target" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
 
-      - name: Stage zero-config runtime resources
-        run: >-
-          python scripts/stage_desktop_runtime.py
-          --platform "${{ matrix.name }}"
-          --target "$env:TARGET_TRIPLE"
-          --input dist/engine
-          --output apps/desktop/src-tauri/resources/whitelist-hide/generated
-        if: runner.os == 'Windows'
-        shell: pwsh
-
-      - name: Stage zero-config runtime resources on Unix
+      - name: Stage runtime resources on Unix
         if: runner.os != 'Windows'
         shell: bash
         run: |
-          python3 scripts/stage_desktop_runtime.py             --platform "${{ matrix.name }}"             --target "$TARGET_TRIPLE"             --input dist/engine             --output apps/desktop/src-tauri/resources/whitelist-hide/generated
+          python3 scripts/stage_desktop_runtime.py --platform "${{ matrix.name }}" --target "$TARGET_TRIPLE" --input dist/engine --output apps/desktop/src-tauri/resources/whitelist-hide/generated
+
+      - name: Stage runtime resources on Windows
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: python scripts/stage_desktop_runtime.py --platform "${{ matrix.name }}" --target "$env:TARGET_TRIPLE" --input dist/engine --output apps/desktop/src-tauri/resources/whitelist-hide/generated
 
       - name: Generate platform icons
         working-directory: apps/desktop
