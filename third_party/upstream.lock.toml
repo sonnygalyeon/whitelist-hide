@@ -38,3 +38,21 @@ license = "LGPL-3.0-only OR GPL-2.0-only"
 asset_url = "https://github.com/basil00/WinDivert/releases/download/v2.2.2/WinDivert-2.2.2-A.zip"
 sha256 = "63cb41763bb4b20f600b6de04e991a9c2be73279e317d4d82f237b150c5f3f15"
 status = "pinned-release-verified"
+
+[linux_static.libmnl]
+version = "1.0.5"
+asset_url = "https://www.netfilter.org/pub/libmnl/libmnl-1.0.5.tar.bz2"
+sha256 = "274b9b919ef3152bfb3da3a13c950dd60d6e2bcd54230ffeca298d03b40d0525"
+status = "pinned-tarball-verified"
+
+[linux_static.libnfnetlink]
+version = "1.0.2"
+asset_url = "https://www.netfilter.org/pub/libnfnetlink/libnfnetlink-1.0.2.tar.bz2"
+sha256 = "b064c7c3d426efb4786e60a8e6859b82ee2f2c5e49ffeea640cfe4fe33cbc376"
+status = "pinned-tarball-verified"
+
+[linux_static.libnetfilter_queue]
+version = "1.0.5"
+asset_url = "https://www.netfilter.org/pub/libnetfilter_queue/libnetfilter_queue-1.0.5.tar.bz2"
+sha256 = "f9ff3c11305d6e03d81405957bdc11aea18e0d315c3e3f48da53a24ba251b9f5"
+status = "pinned-tarball-verified"
