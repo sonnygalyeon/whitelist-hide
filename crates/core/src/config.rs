@@ -3,11 +3,11 @@ use std::fmt;
 use std::io;
 use std::path::{Path, PathBuf};
 
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 const CONFIG_SCHEMA: u32 = 1;
 
-#[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct AppConfig {
     pub schema: u32,
@@ -15,14 +15,14 @@ pub struct AppConfig {
     pub strategy: StrategyConfig,
 }
 
-#[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct EngineConfig {
     pub manifest: PathBuf,
     pub binary: PathBuf,
 }
 
-#[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct StrategyConfig {
     pub name: String,
@@ -49,6 +49,32 @@ impl AppConfig {
             source,
         })?;
         Self::parse(&content)
+    }
+
+    pub fn save(&self, path: &Path) -> Result<(), ConfigError> {
+        self.validate()?;
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent).map_err(|source| ConfigError::Io {
+                path: parent.to_path_buf(),
+                source,
+            })?;
+        }
+        let content = toml::to_string_pretty(self).map_err(ConfigError::Serialize)?;
+        let temp = path.with_extension("toml.new");
+        std::fs::write(&temp, content).map_err(|source| ConfigError::Io {
+            path: temp.clone(),
+            source,
+        })?;
+        if path.exists() {
+            std::fs::remove_file(path).map_err(|source| ConfigError::Io {
+                path: path.to_path_buf(),
+                source,
+            })?;
+        }
+        std::fs::rename(&temp, path).map_err(|source| ConfigError::Io {
+            path: path.to_path_buf(),
+            source,
+        })
     }
 
     pub fn validate(&self) -> Result<(), ConfigError> {
@@ -119,6 +145,7 @@ fn is_safe_identifier(value: &str) -> bool {
 pub enum ConfigError {
     Io { path: PathBuf, source: io::Error },
     Parse(toml::de::Error),
+    Serialize(toml::ser::Error),
     InvalidConfig(String),
 }
 
@@ -129,6 +156,7 @@ impl fmt::Display for ConfigError {
                 write!(f, "failed to access {}: {source}", path.display())
             }
             Self::Parse(source) => write!(f, "invalid TOML config: {source}"),
+            Self::Serialize(source) => write!(f, "cannot serialize TOML config: {source}"),
             Self::InvalidConfig(message) => write!(f, "invalid config: {message}"),
         }
     }
@@ -139,6 +167,7 @@ impl Error for ConfigError {
         match self {
             Self::Io { source, .. } => Some(source),
             Self::Parse(source) => Some(source),
+            Self::Serialize(source) => Some(source),
             Self::InvalidConfig(_) => None,
         }
     }
