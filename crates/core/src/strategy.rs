@@ -29,7 +29,11 @@ pub struct StrategyFilters {
     #[serde(default)]
     pub domain_lists: Vec<PathBuf>,
     #[serde(default)]
+    pub domain_exclude_lists: Vec<PathBuf>,
+    #[serde(default)]
     pub ip_lists: Vec<PathBuf>,
+    #[serde(default)]
+    pub ip_exclude_lists: Vec<PathBuf>,
 }
 
 #[derive(Debug, Clone, Copy, Deserialize, PartialEq, Eq)]
@@ -104,7 +108,9 @@ impl StrategyDefinition {
             .filters
             .domain_lists
             .iter()
+            .chain(self.filters.domain_exclude_lists.iter())
             .chain(self.filters.ip_lists.iter())
+            .chain(self.filters.ip_exclude_lists.iter())
         {
             validate_relative_data_path(path)?;
         }

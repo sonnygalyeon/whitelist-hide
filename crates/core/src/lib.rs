@@ -3,6 +3,7 @@
 //! The core crate intentionally performs no privileged network modification.
 
 pub mod artifact;
+pub mod compiler;
 pub mod config;
 pub mod strategy;
 

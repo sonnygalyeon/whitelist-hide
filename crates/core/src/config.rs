@@ -26,6 +26,8 @@ pub struct EngineConfig {
 #[serde(deny_unknown_fields)]
 pub struct StrategyConfig {
     pub name: String,
+    #[serde(default = "default_strategy_directory")]
+    pub directory: PathBuf,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -86,6 +88,16 @@ impl AppConfig {
             binary: resolve(base, &self.engine.binary),
         }
     }
+
+    #[must_use]
+    pub fn resolve_strategy_path(&self, config_path: &Path) -> PathBuf {
+        let base = config_path.parent().unwrap_or_else(|| Path::new("."));
+        resolve(base, &self.strategy.directory).join(format!("{}.toml", self.strategy.name))
+    }
+}
+
+fn default_strategy_directory() -> PathBuf {
+    PathBuf::from("strategies")
 }
 
 fn resolve(base: &Path, path: &Path) -> PathBuf {
@@ -164,6 +176,7 @@ name = "general-simple-fake"
             },
             strategy: StrategyConfig {
                 name: "general;rm".to_owned(),
+                directory: PathBuf::from("strategies"),
             },
         };
         assert!(config.validate().is_err());
@@ -179,6 +192,7 @@ name = "general-simple-fake"
             },
             strategy: StrategyConfig {
                 name: "general".to_owned(),
+                directory: PathBuf::from("strategies"),
             },
         };
 
