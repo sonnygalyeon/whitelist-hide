@@ -90,10 +90,7 @@ fn compile_v1(strategy: &StrategyDefinition, base: &Path) -> Result<Vec<String>,
     Ok(args)
 }
 
-fn compile_winws2(
-    strategy: &StrategyDefinition,
-    base: &Path,
-) -> Result<Vec<String>, CompileError> {
+fn compile_winws2(strategy: &StrategyDefinition, base: &Path) -> Result<Vec<String>, CompileError> {
     let mut args = Vec::new();
 
     if !strategy.filters.tcp_ports.is_empty() {
@@ -486,12 +483,8 @@ positions = [2, 1]
     #[test]
     fn compiles_winws2_capture_and_lua_profiles() {
         let strategy = StrategyDefinition::parse(STRATEGY).expect("valid strategy");
-        let compiled = compile_strategy(
-            &strategy,
-            Path::new("strategy.toml"),
-            EngineFlavor::Winws,
-        )
-        .expect("compile");
+        let compiled = compile_strategy(&strategy, Path::new("strategy.toml"), EngineFlavor::Winws)
+            .expect("compile");
 
         assert_eq!(compiled.args[0], "--wf-tcp-out=80,443");
         assert_eq!(compiled.args[1], "--wf-udp-out=443");
@@ -515,15 +508,17 @@ positions = [2, 1]
                 .args
                 .contains(&"--lua-desync=fake:blob=fake_default_quic:repeats=2".to_owned())
         );
-        assert!(!compiled.args.iter().any(|arg| arg.starts_with("--dpi-desync")));
+        assert!(
+            !compiled
+                .args
+                .iter()
+                .any(|arg| arg.starts_with("--dpi-desync"))
+        );
     }
 
     #[test]
     fn splits_capture_profiles_around_http_and_quic_ports() {
-        let ranges = vec![PortRange {
-            start: 79,
-            end: 81,
-        }];
+        let ranges = vec![PortRange { start: 79, end: 81 }];
         assert_eq!(
             without_port(&ranges, 80),
             vec![
