@@ -98,7 +98,9 @@ where
                         label: label.to_owned(),
                         value: "unknown".to_owned(),
                         level: DiagnosticLevel::Warning,
-                        detail: Some("command succeeded but expected data was not found".to_owned()),
+                        detail: Some(
+                            "command succeeded but expected data was not found".to_owned(),
+                        ),
                     },
                     true,
                 ),
@@ -385,11 +387,7 @@ fn step(id: &str, description: &str, command_preview: Option<&str>) -> ActionSte
 fn command_failure_detail(program: &str, args: &[&str], output: &CommandOutput) -> String {
     let stderr = output.stderr.trim();
     if stderr.is_empty() {
-        format!(
-            "{program} {} exited with {:?}",
-            args.join(" "),
-            output.code
-        )
+        format!("{program} {} exited with {:?}", args.join(" "), output.code)
     } else {
         format!(
             "{program} {} exited with {:?}: {stderr}",
@@ -486,8 +484,12 @@ mod tests {
 
     #[test]
     fn parses_default_route_fields() {
-        let route = "route to: default\ndestination: default\ngateway: 192.168.1.1\ninterface: en0\n";
-        assert_eq!(route_value(route, "gateway:"), Some("192.168.1.1".to_owned()));
+        let route =
+            "route to: default\ndestination: default\ngateway: 192.168.1.1\ninterface: en0\n";
+        assert_eq!(
+            route_value(route, "gateway:"),
+            Some("192.168.1.1".to_owned())
+        );
         assert_eq!(route_value(route, "interface:"), Some("en0".to_owned()));
     }
 
