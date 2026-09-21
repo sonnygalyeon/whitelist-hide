@@ -28,15 +28,18 @@ jobs:
         working-directory: apps/desktop
         run: npm install --package-lock-only --ignore-scripts
 
+      - name: Generate desktop Rust lockfile
+        run: cargo generate-lockfile --manifest-path apps/desktop/src-tauri/Cargo.toml
+
       - name: Commit lockfiles
         shell: bash
         run: |
           set -euo pipefail
-          if [ -z "$(git status --porcelain -- Cargo.lock apps/desktop/package-lock.json)" ]; then
+          if [ -z "$(git status --porcelain -- Cargo.lock apps/desktop/package-lock.json apps/desktop/src-tauri/Cargo.lock)" ]; then
             exit 0
           fi
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add Cargo.lock apps/desktop/package-lock.json
+          git add Cargo.lock apps/desktop/package-lock.json apps/desktop/src-tauri/Cargo.lock apps/desktop/src-tauri/Cargo.lock
           git commit -m "build: pin release dependency lockfiles"
           git push origin HEAD:feature/release-candidate-runtime
