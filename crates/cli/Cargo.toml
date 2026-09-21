@@ -1,0 +1,15 @@
+[package]
+name = "whitelist-hide-cli"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+
+[[bin]]
+name = "whitelist-hide"
+path = "src/main.rs"
+
+[dependencies]
+whitelist-hide-core = { path = "../core" }
+
+[lints]
+workspace = true
