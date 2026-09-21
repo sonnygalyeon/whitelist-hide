@@ -1,0 +1,52 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>whitelist-hide</title>
+  <link rel="stylesheet" href="./styles.css">
+  <script src="./app.js" defer></script>
+</head>
+<body>
+  <main class="shell">
+    <header>
+      <div>
+        <p class="eyebrow">whitelist-hide</p>
+        <h1>Network control</h1>
+      </div>
+      <span id="platform" class="chip">...</span>
+    </header>
+
+    <section class="hero">
+      <div>
+        <p class="label">Backend status</p>
+        <h2 id="state">Loading</h2>
+        <p id="summary">Reading local diagnostics...</p>
+      </div>
+      <button id="refresh">Refresh</button>
+    </section>
+
+    <section>
+      <div class="section-title">
+        <h3>Diagnostics</h3>
+        <span id="available"></span>
+      </div>
+      <div id="diagnostics" class="diagnostics"></div>
+    </section>
+
+    <section>
+      <div class="section-title">
+        <h3>Action plan</h3>
+        <div class="actions">
+          <button data-action="start">Start plan</button>
+          <button data-action="stop">Stop plan</button>
+          <button data-action="cleanup">Cleanup plan</button>
+        </div>
+      </div>
+      <ol id="plan" class="plan">
+        <li>Select an action to inspect exactly what the backend would do.</li>
+      </ol>
+    </section>
+  </main>
+</body>
+</html>

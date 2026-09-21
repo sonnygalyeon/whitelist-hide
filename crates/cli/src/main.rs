@@ -1,13 +1,19 @@
 use std::env;
+use std::fmt::Display;
 use std::path::{Path, PathBuf};
 
 use whitelist_hide_core::artifact::{ArtifactManifest, VerificationReport, verify_file};
 use whitelist_hide_core::config::AppConfig;
+use whitelist_hide_core::strategy::StrategyManifest;
 use whitelist_hide_core::{DoctorReport, Platform};
+use whitelist_hide_linux::LinuxBackend;
 use whitelist_hide_macos::MacOsBackend;
+use whitelist_hide_service::runtime::RuntimeState;
 use whitelist_hide_service::{
     ActionPlan, AppService, BackendAction, BackendState, BackendStatus, DiagnosticLevel,
+    PlatformBackend,
 };
+use whitelist_hide_windows::WindowsBackend;
 
 fn main() {
     let args: Vec<String> = env::args().skip(1).collect();
@@ -21,10 +27,7 @@ fn main() {
             doctor();
             0
         }
-        [command] if command == "status" => {
-            status();
-            0
-        }
+        [command] if command == "status" => status(),
         [command] if command == "config-path" => {
             println!("{}", config_path().display());
             0
@@ -47,23 +50,26 @@ fn main() {
         [group, action, path] if group == "config" && action == "verify" => {
             config_verify(Path::new(path))
         }
+        [group, action, path] if group == "strategy" && action == "validate" => {
+            strategy_validate(Path::new(path))
+        }
         [group, action, manifest, binary] if group == "engine" && action == "verify" => {
             engine_verify(Path::new(manifest), Path::new(binary))
         }
         [group, platform, action]
-            if group == "backend" && platform == "macos" && action == "inspect" =>
+            if group == "backend" && action == "inspect" =>
         {
-            macos_inspect()
+            backend_inspect(platform)
         }
         [group, platform, plan, action]
-            if group == "backend" && platform == "macos" && plan == "plan" =>
+            if group == "backend" && plan == "plan" =>
         {
-            macos_plan(action)
+            backend_plan(platform, action)
         }
         [group, platform, action]
             if group == "backend" && platform == "macos" && action == "cleanup" =>
         {
-            macos_plan("cleanup")
+            backend_plan("macos", "cleanup")
         }
         [group, platform, action, flag]
             if group == "backend"
@@ -91,26 +97,65 @@ fn doctor() {
     println!("architecture: {}", report.architecture);
     println!("planned interceptor: {}", report.interceptor);
     println!("network changes: guarded by platform backend plans");
+}
 
-    match report.platform {
-        Platform::Windows => {
-            println!("next backend milestone: driver provenance + WinDivert adapter")
+fn status() -> i32 {
+    let path = runtime_state_path();
+    match RuntimeState::load(&path) {
+        Ok(state) => {
+            println!("state: recorded");
+            println!("session: {}", state.session_id);
+            println!("platform: {}", state.platform);
+            match state.engine {
+                Some(engine) => {
+                    println!("engine pid: {}", engine.pid);
+                    println!("engine: {}", engine.executable.display());
+                }
+                None => println!("engine: none"),
+            }
+            if let Some(interface) = state.network.utun_interface {
+                println!("utun: {interface}");
+            }
+            if let Some(anchor) = state.network.pf_anchor {
+                println!("pf anchor: {anchor}");
+            }
+            if let Some(table) = state.network.nft_table {
+                println!("nft table: {table}");
+            }
+            if let Some(service) = state.network.windows_service {
+                println!("windows service: {service}");
+            }
+            0
         }
-        Platform::MacOS => println!("macOS backend: inspection and scoped pf cleanup available"),
-        Platform::Linux => println!("next backend milestone: reversible nftables/NFQUEUE adapter"),
-        Platform::Unsupported => println!("backend: unsupported platform"),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            println!("state: stopped");
+            println!("runtime journal: {}", path.display());
+            0
+        }
+        Err(error) => {
+            eprintln!("runtime state is unreadable: {error}");
+            2
+        }
     }
 }
 
-fn status() {
-    println!("state: stopped");
-    println!("engine: not configured");
-    println!("system modifications: none");
+fn backend_inspect(platform: &str) -> i32 {
+    match platform {
+        "macos" => inspect_backend(AppService::new(MacOsBackend::system())),
+        "windows" => inspect_backend(AppService::new(WindowsBackend::system())),
+        "linux" => inspect_backend(AppService::new(LinuxBackend::system())),
+        _ => {
+            eprintln!("unknown platform: {platform}");
+            2
+        }
+    }
 }
 
-fn macos_inspect() -> i32 {
-    let service = AppService::new(MacOsBackend::system());
-
+fn inspect_backend<B>(service: AppService<B>) -> i32
+where
+    B: PlatformBackend,
+    B::Error: Display,
+{
     match service.status() {
         Ok(status) => {
             print_backend_status(&status);
@@ -121,13 +166,13 @@ fn macos_inspect() -> i32 {
             }
         }
         Err(error) => {
-            eprintln!("macOS backend inspection failed: {error}");
+            eprintln!("backend inspection failed: {error}");
             2
         }
     }
 }
 
-fn macos_plan(action: &str) -> i32 {
+fn backend_plan(platform: &str, action: &str) -> i32 {
     let action = match parse_backend_action(action) {
         Some(action) => action,
         None => {
@@ -136,14 +181,29 @@ fn macos_plan(action: &str) -> i32 {
         }
     };
 
-    let service = AppService::new(MacOsBackend::system());
+    match platform {
+        "macos" => plan_backend(AppService::new(MacOsBackend::system()), action),
+        "windows" => plan_backend(AppService::new(WindowsBackend::system()), action),
+        "linux" => plan_backend(AppService::new(LinuxBackend::system()), action),
+        _ => {
+            eprintln!("unknown platform: {platform}");
+            2
+        }
+    }
+}
+
+fn plan_backend<B>(service: AppService<B>, action: BackendAction) -> i32
+where
+    B: PlatformBackend,
+    B::Error: Display,
+{
     match service.plan(action) {
         Ok(plan) => {
             print_action_plan(&plan);
             0
         }
         Err(error) => {
-            eprintln!("cannot build macOS backend plan: {error}");
+            eprintln!("cannot build backend plan: {error}");
             4
         }
     }
@@ -151,7 +211,6 @@ fn macos_plan(action: &str) -> i32 {
 
 fn macos_cleanup_apply() -> i32 {
     let service = AppService::new(MacOsBackend::system());
-
     match service.execute(BackendAction::Cleanup) {
         Ok(result) => {
             println!("action: {:?}", result.action);
@@ -206,6 +265,22 @@ fn print_action_plan(plan: &ActionPlan) {
         println!("{}. {}", index + 1, step.description);
         if let Some(command) = &step.command_preview {
             println!("   command: {command}");
+        }
+    }
+}
+
+fn strategy_validate(path: &Path) -> i32 {
+    match StrategyManifest::load(path) {
+        Ok(strategy) => {
+            println!("strategy: OK");
+            println!("name: {}", strategy.name);
+            println!("rules: {}", strategy.rules.len());
+            0
+        }
+        Err(error) => {
+            eprintln!("strategy: INVALID");
+            eprintln!("reason: {error}");
+            2
         }
     }
 }
@@ -278,19 +353,11 @@ fn print_verification(report: &VerificationReport) -> i32 {
     println!("actual SHA-256:   {}", report.actual_sha256);
     println!(
         "integrity: {}",
-        if report.integrity_ok() {
-            "OK"
-        } else {
-            "FAILED"
-        }
+        if report.integrity_ok() { "OK" } else { "FAILED" }
     );
     println!(
         "platform: {}",
-        if report.platform_ok() {
-            "OK"
-        } else {
-            "MISMATCH"
-        }
+        if report.platform_ok() { "OK" } else { "MISMATCH" }
     );
 
     if report.trusted() {
@@ -303,6 +370,13 @@ fn print_verification(report: &VerificationReport) -> i32 {
         eprintln!("trust: REJECTED (artifact is for another platform)");
         4
     }
+}
+
+fn runtime_state_path() -> PathBuf {
+    config_path()
+        .parent()
+        .unwrap_or_else(|| Path::new("."))
+        .join("runtime.json")
 }
 
 fn config_path() -> PathBuf {
@@ -335,7 +409,7 @@ fn config_path() -> PathBuf {
 
 fn help() {
     println!(
-        "whitelist-hide {}\n\nUSAGE:\n    whitelist-hide <COMMAND>\n\nCOMMANDS:\n    doctor\n        Read-only platform diagnostics\n\n    status\n        Show current engine state\n\n    config-path\n        Show the default configuration path\n\n    config validate [PATH]\n        Validate a TOML configuration without touching the network\n\n    config verify [PATH]\n        Validate configuration and verify its engine artifact\n\n    engine verify <MANIFEST> <BINARY>\n        Verify an artifact SHA-256 and platform against its manifest\n\n    backend macos inspect\n        Inspect route, pf, utun and relevant macOS state\n\n    backend macos plan <start|stop|cleanup>\n        Print the exact high-level backend plan without applying it\n\n    backend macos cleanup\n        Preview scoped cleanup\n\n    backend macos cleanup --apply\n        Flush only the whitelist-hide pf anchor (requires privileges)\n\n    version\n        Show version\n\n    help\n        Show this help",
+        "whitelist-hide {}\n\nUSAGE:\n    whitelist-hide <COMMAND>\n\nCOMMANDS:\n    doctor\n    status\n    config-path\n    config validate [PATH]\n    config verify [PATH]\n    strategy validate <PATH>\n    engine verify <MANIFEST> <BINARY>\n    backend <macos|windows|linux> inspect\n    backend <macos|windows|linux> plan <start|stop|cleanup>\n    backend macos cleanup [--apply]\n    version\n    help",
         env!("CARGO_PKG_VERSION")
     );
 }

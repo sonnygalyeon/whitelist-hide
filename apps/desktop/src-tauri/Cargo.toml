@@ -1,0 +1,26 @@
+[package]
+name = "whitelist-hide-desktop"
+version = "0.1.0"
+description = "whitelist-hide desktop application"
+edition = "2024"
+rust-version = "1.85"
+
+[lib]
+name = "whitelist_hide_desktop_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[[bin]]
+name = "whitelist-hide-desktop"
+path = "src/main.rs"
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+tauri = { version = "2", features = [] }
+whitelist-hide-core = { path = "../../../crates/core" }
+whitelist-hide-linux = { path = "../../../crates/platform-linux" }
+whitelist-hide-macos = { path = "../../../crates/platform-macos" }
+whitelist-hide-service = { path = "../../../crates/service" }
+whitelist-hide-windows = { path = "../../../crates/platform-windows" }

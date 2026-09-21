@@ -10,8 +10,10 @@ path = "src/main.rs"
 
 [dependencies]
 whitelist-hide-core = { path = "../core" }
+whitelist-hide-linux = { path = "../platform-linux" }
 whitelist-hide-macos = { path = "../platform-macos" }
 whitelist-hide-service = { path = "../service" }
+whitelist-hide-windows = { path = "../platform-windows" }
 
 [lints]
 workspace = true
