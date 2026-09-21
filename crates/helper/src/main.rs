@@ -46,7 +46,9 @@ fn main() {
 
     match serde_json::to_string(&response) {
         Ok(json) => println!("{json}"),
-        Err(_) => println!(r#"{"schema":1,"ok":false,"message":"serialization failed","engine_pid":null}"#),
+        Err(_) => println!(
+            r#"{"schema":1,"ok":false,"message":"serialization failed","engine_pid":null}"#
+        ),
     }
 
     if !response.ok {
@@ -120,7 +122,10 @@ fn handle(line: &str) -> Response {
 
 fn validate_path(path: &std::path::Path) -> Result<(), String> {
     if !path.is_absolute() {
-        return Err(format!("helper accepts only absolute paths: {}", path.display()));
+        return Err(format!(
+            "helper accepts only absolute paths: {}",
+            path.display()
+        ));
     }
 
     if path
@@ -148,14 +153,14 @@ mod tests {
 
     #[test]
     fn rejects_unknown_json_fields() {
-        let request = r#"{"schema":1,"action":{"type":"stop","state_path":"/tmp/state","command":"rm"}}"#;
+        let request =
+            r#"{"schema":1,"action":{"type":"stop","state_path":"/tmp/state","command":"rm"}}"#;
         assert!(!handle(request).ok);
     }
 
     #[test]
     fn rejects_relative_paths() {
-        let request =
-            r#"{"schema":1,"action":{"type":"stop","state_path":"relative/state.json"}}"#;
+        let request = r#"{"schema":1,"action":{"type":"stop","state_path":"relative/state.json"}}"#;
         assert!(!handle(request).ok);
     }
 }
