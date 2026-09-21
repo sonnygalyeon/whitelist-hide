@@ -177,20 +177,16 @@ jobs:
           ARTIFACT: ${{ steps.upstream.outputs.artifact }}
           BUILD_TARGET: ${{ steps.upstream.outputs.build_target }}
           LICENSE_NAME: ${{ steps.upstream.outputs.license }}
-        run: |
-          set -euo pipefail
-          cd upstream
-          export CFLAGS="-DZAPRET_GH_VER=whitelist-hide -DZAPRET_GH_HASH=$COMMIT"
-          make -C "$SUBDIR" "$BUILD_TARGET"
-          test -f "$SUBDIR/$ARTIFACT"
-          mkdir -p ../dist/windows
-          cp "$SUBDIR/$ARTIFACT" "../dist/windows/$ARTIFACT"
-          sha256sum "../dist/windows/$ARTIFACT" | tee ../dist/windows/SHA256SUMS
-          {
-            echo "source_commit=$COMMIT"
-            echo "license=$LICENSE_NAME"
-            echo "builder=github-actions/windows-latest+cygwin"
-          } > ../dist/windows/PROVENANCE.txt
+        run: >-
+          export MAKEFLAGS=-j$(nproc) &&
+          export CFLAGS="-DZAPRET_GH_VER=whitelist-hide -DZAPRET_GH_HASH=$COMMIT" &&
+          cd upstream &&
+          make -C "$SUBDIR" "$BUILD_TARGET" &&
+          test -f "$SUBDIR/$ARTIFACT" &&
+          mkdir -p ../dist/windows &&
+          cp "$SUBDIR/$ARTIFACT" "../dist/windows/$ARTIFACT" &&
+          sha256sum "../dist/windows/$ARTIFACT" > ../dist/windows/SHA256SUMS &&
+          printf 'source_commit=%s\nlicense=%s\nbuilder=github-actions/windows-latest+cygwin\n' "$COMMIT" "$LICENSE_NAME" > ../dist/windows/PROVENANCE.txt
 
       - name: Upload source-built Windows engine
         uses: actions/upload-artifact@v4
