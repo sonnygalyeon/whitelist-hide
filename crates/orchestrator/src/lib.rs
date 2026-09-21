@@ -135,7 +135,9 @@ fn start_linux(
     let mut state = store
         .load()
         .map_err(|error| SessionError::Runtime(error.to_string()))?
-        .ok_or_else(|| SessionError::Runtime("runtime state disappeared after launch".to_owned()))?;
+        .ok_or_else(|| {
+            SessionError::Runtime("runtime state disappeared after launch".to_owned())
+        })?;
     state.owned_firewall_scope = Some("inet:whitelist_hide".to_owned());
     state.phase = RuntimePhase::Running;
     store
@@ -178,15 +180,9 @@ fn start_macos(
         ("ZAPRET_UTUN_UNIT".to_owned(), "51".to_owned()),
     ];
 
-    let launched = launch_verified_engine_with_env(
-        manifest,
-        binary,
-        &plan.arguments,
-        &env,
-        store,
-        session_id,
-    )
-    .map_err(SessionError::Engine)?;
+    let launched =
+        launch_verified_engine_with_env(manifest, binary, &plan.arguments, &env, store, session_id)
+            .map_err(SessionError::Engine)?;
 
     if !wait_for_interface(MACOS_UTUN, 40) {
         let _ = stop_recorded_engine(store);
@@ -212,7 +208,11 @@ fn start_macos(
 
     let mut pf_token = None;
     let pf_info = run("/sbin/pfctl", &["-s", "info"])?;
-    if pf_info.stdout.lines().any(|line| line.starts_with("Status: Disabled")) {
+    if pf_info
+        .stdout
+        .lines()
+        .any(|line| line.starts_with("Status: Disabled"))
+    {
         let enabled = run("/sbin/pfctl", &["-E"])?;
         pf_token = parse_pf_token(&format!("{}\n{}", enabled.stdout, enabled.stderr));
     }
@@ -387,9 +387,11 @@ fn parse_mac(text: &str) -> Option<String> {
         let value = token.trim_matches(|c: char| c == '(' || c == ')');
         let groups = value.split(':').collect::<Vec<_>>();
         (groups.len() == 6
-            && groups
-                .iter()
-                .all(|group| !group.is_empty() && group.len() <= 2 && group.chars().all(|c| c.is_ascii_hexdigit())))
+            && groups.iter().all(|group| {
+                !group.is_empty()
+                    && group.len() <= 2
+                    && group.chars().all(|c| c.is_ascii_hexdigit())
+            }))
         .then(|| value.to_owned())
     })
 }
@@ -515,7 +517,9 @@ impl fmt::Display for SessionError {
             Self::Engine(error) => write!(f, "engine error: {error}"),
             Self::Privilege(message) => f.write_str(message),
             Self::Health(message) => write!(f, "health check failed: {message}"),
-            Self::CommandIo { program, source } => write!(f, "failed to execute {program}: {source}"),
+            Self::CommandIo { program, source } => {
+                write!(f, "failed to execute {program}: {source}")
+            }
             Self::CommandFailed {
                 program,
                 args,
@@ -559,9 +563,6 @@ mod tests {
     #[test]
     fn parses_mac_address() {
         let input = "? (192.168.1.1) at aa:bb:cc:dd:ee:ff on en0";
-        assert_eq!(
-            parse_mac(input),
-            Some("aa:bb:cc:dd:ee:ff".to_owned())
-        );
+        assert_eq!(parse_mac(input), Some("aa:bb:cc:dd:ee:ff".to_owned()));
     }
 }
