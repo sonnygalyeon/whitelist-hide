@@ -3,8 +3,14 @@ name: release-desktop
 on:
   workflow_dispatch:
   push:
+    branches:
+      - feature/release-candidate
     tags:
       - "v*"
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 permissions:
   contents: read
@@ -39,6 +45,10 @@ jobs:
       - name: Install frontend dependencies
         working-directory: apps/desktop
         run: npm ci
+
+      - name: Generate platform icons
+        working-directory: apps/desktop
+        run: npx tauri icon app-icon.svg
 
       - name: Build privileged helper
         run: cargo build --release --locked -p whitelist-hide-helper
