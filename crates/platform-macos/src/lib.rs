@@ -1,15 +1,17 @@
 use std::error::Error;
 use std::fmt;
-use std::io;
-use std::process::Command;
+use std::io::{self, Write};
+use std::process::{Command, Stdio};
 
 use whitelist_hide_core::Platform;
+mod managed;
+
 use whitelist_hide_service::{
     ActionPlan, ActionResult, ActionStep, BackendAction, BackendState, BackendStatus,
     DiagnosticItem, DiagnosticLevel, PlatformBackend,
 };
 
-pub const PF_ANCHOR: &str = "com.whitelisthide";
+pub const PF_ANCHOR: &str = "com.apple/whitelist-hide";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CommandOutput {
@@ -27,6 +29,12 @@ impl CommandOutput {
 
 pub trait CommandRunner {
     fn run(&self, program: &str, args: &[&str]) -> Result<CommandOutput, MacOsError>;
+    fn run_with_input(
+        &self,
+        program: &str,
+        args: &[&str],
+        input: &[u8],
+    ) -> Result<CommandOutput, MacOsError>;
 }
 
 #[derive(Debug, Clone, Copy, Default)]
@@ -48,10 +56,52 @@ impl CommandRunner for SystemCommandRunner {
             stderr: String::from_utf8_lossy(&output.stderr).into_owned(),
         })
     }
+
+    fn run_with_input(
+        &self,
+        program: &str,
+        args: &[&str],
+        input: &[u8],
+    ) -> Result<CommandOutput, MacOsError> {
+        let mut child = Command::new(program)
+            .args(args)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .map_err(|source| MacOsError::CommandIo {
+                program: program.to_owned(),
+                source,
+            })?;
+
+        let mut stdin = child.stdin.take().ok_or_else(|| MacOsError::Lifecycle(
+            format!("failed to open stdin for {program}"),
+        ))?;
+        stdin
+            .write_all(input)
+            .map_err(|source| MacOsError::CommandIo {
+                program: program.to_owned(),
+                source,
+            })?;
+        drop(stdin);
+
+        let output = child
+            .wait_with_output()
+            .map_err(|source| MacOsError::CommandIo {
+                program: program.to_owned(),
+                source,
+            })?;
+
+        Ok(CommandOutput {
+            code: output.status.code(),
+            stdout: String::from_utf8_lossy(&output.stdout).into_owned(),
+            stderr: String::from_utf8_lossy(&output.stderr).into_owned(),
+        })
+    }
 }
 
 pub struct MacOsBackend<R = SystemCommandRunner> {
-    runner: R,
+    pub(crate) runner: R,
 }
 
 impl MacOsBackend<SystemCommandRunner> {
@@ -128,7 +178,7 @@ where
         }
     }
 
-    fn ensure_macos(&self) -> Result<(), MacOsError> {
+    pub(crate) fn ensure_macos(&self) -> Result<(), MacOsError> {
         if Platform::detect() == Platform::MacOS {
             Ok(())
         } else {
@@ -288,7 +338,7 @@ where
                 title: "Start macOS packet-processing backend".to_owned(),
                 requires_admin: true,
                 mutates_network: true,
-                executable_now: false,
+                executable_now: true,
                 steps: vec![
                     step(
                         "verify",
@@ -313,7 +363,7 @@ where
                     step(
                         "pf",
                         "Load routing rules only into the dedicated whitelist-hide pf anchor.",
-                        Some("/sbin/pfctl -a com.whitelisthide -f -"),
+                        Some("/sbin/pfctl -a com.apple/whitelist-hide -f -"),
                     ),
                     step(
                         "health",
@@ -327,12 +377,12 @@ where
                 title: "Stop macOS packet-processing backend".to_owned(),
                 requires_admin: true,
                 mutates_network: true,
-                executable_now: false,
+                executable_now: true,
                 steps: vec![
                     step(
                         "pf",
                         "Remove only rules owned by whitelist-hide.",
-                        Some("/sbin/pfctl -a com.whitelisthide -F all"),
+                        Some("/sbin/pfctl -a com.apple/whitelist-hide -F all"),
                     ),
                     step(
                         "engine",
@@ -355,7 +405,7 @@ where
                 steps: vec![step(
                     "pf",
                     "Flush only the dedicated whitelist-hide pf anchor. Global pf state is not disabled or reset.",
-                    Some("/sbin/pfctl -a com.whitelisthide -F all"),
+                    Some("/sbin/pfctl -a com.apple/whitelist-hide -F all"),
                 )],
             }),
         }
@@ -365,12 +415,10 @@ where
         match action {
             BackendAction::Cleanup => self.cleanup_anchor(),
             BackendAction::Start => Err(MacOsError::ActionUnavailable(
-                "start is intentionally disabled until the utun engine lifecycle is implemented"
-                    .to_owned(),
+                "start requires a managed StartRequest".to_owned(),
             )),
             BackendAction::Stop => Err(MacOsError::ActionUnavailable(
-                "stop is intentionally disabled until engine ownership/state tracking is implemented"
-                    .to_owned(),
+                "stop requires a managed StopRequest".to_owned(),
             )),
         }
     }
@@ -397,7 +445,7 @@ fn command_failure_detail(program: &str, args: &[&str], output: &CommandOutput) 
     }
 }
 
-fn route_value(text: &str, key: &str) -> Option<String> {
+pub(crate) fn route_value(text: &str, key: &str) -> Option<String> {
     text.lines().find_map(|line| {
         let line = line.trim();
         line.strip_prefix(key)
@@ -406,7 +454,7 @@ fn route_value(text: &str, key: &str) -> Option<String> {
     })
 }
 
-fn parse_pf_status(text: &str) -> Option<String> {
+pub(crate) fn parse_pf_status(text: &str) -> Option<String> {
     text.lines().find_map(|line| {
         let line = line.trim();
         line.strip_prefix("Status:")
@@ -415,14 +463,14 @@ fn parse_pf_status(text: &str) -> Option<String> {
     })
 }
 
-fn parse_utun_interfaces(text: &str) -> Vec<String> {
+pub(crate) fn parse_utun_interfaces(text: &str) -> Vec<String> {
     text.split_whitespace()
         .filter(|name| name.starts_with("utun"))
         .map(str::to_owned)
         .collect()
 }
 
-fn nonempty_trimmed(text: &str) -> Option<&str> {
+pub(crate) fn nonempty_trimmed(text: &str) -> Option<&str> {
     let value = text.trim();
     (!value.is_empty()).then_some(value)
 }
@@ -444,6 +492,7 @@ pub enum MacOsError {
         stderr: String,
     },
     ActionUnavailable(String),
+    Lifecycle(String),
 }
 
 impl fmt::Display for MacOsError {
@@ -464,7 +513,7 @@ impl fmt::Display for MacOsError {
                 }
                 Ok(())
             }
-            Self::ActionUnavailable(message) => f.write_str(message),
+            Self::ActionUnavailable(message) | Self::Lifecycle(message) => f.write_str(message),
         }
     }
 }
@@ -473,7 +522,9 @@ impl Error for MacOsError {
     fn source(&self) -> Option<&(dyn Error + 'static)> {
         match self {
             Self::CommandIo { source, .. } => Some(source),
-            Self::CommandFailed { .. } | Self::ActionUnavailable(_) => None,
+            Self::CommandFailed { .. }
+            | Self::ActionUnavailable(_)
+            | Self::Lifecycle(_) => None,
         }
     }
 }
