@@ -1,16 +1,46 @@
 <!doctype html>
-<html lang="en">
+<html lang="ru">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>whitelist-hide</title>
   </head>
   <body>
-    <main>
-      <h1>whitelist-hide</h1>
-      <p>Desktop shell is connected. Final interface design is intentionally pending.</p>
-      <button id="version" type="button">Read backend version</button>
-      <pre id="output"></pre>
+    <main class="shell">
+      <header>
+        <div>
+          <p class="eyebrow">whitelist-hide</p>
+          <h1>Состояние соединения</h1>
+          <p class="muted">Локальный packet-path без телеметрии и скрытых загрузок.</p>
+        </div>
+        <div id="health" class="badge">Проверка…</div>
+      </header>
+
+      <section class="card">
+        <dl class="grid">
+          <div><dt>Платформа</dt><dd id="platform">—</dd></div>
+          <div><dt>Состояние</dt><dd id="running">—</dd></div>
+          <div><dt>Стратегия</dt><dd id="strategy">—</dd></div>
+          <div><dt>Engine PID</dt><dd id="pid">—</dd></div>
+        </dl>
+        <p id="detail" class="detail">Загрузка статуса…</p>
+      </section>
+
+      <section class="actions">
+        <button id="start" class="primary" type="button">Запустить</button>
+        <button id="stop" type="button">Остановить</button>
+        <button id="refresh" type="button">Обновить</button>
+      </section>
+
+      <section class="card compact">
+        <h2>Системный конфиг</h2>
+        <code id="config">—</code>
+      </section>
+
+      <section class="card compact">
+        <h2>Журнал операции</h2>
+        <pre id="output">Готово.</pre>
+      </section>
     </main>
     <script type="module" src="/src/main.js"></script>
   </body>

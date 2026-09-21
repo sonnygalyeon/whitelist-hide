@@ -20,11 +20,17 @@
       }
     ],
     "security": {
-      "capabilities": ["main"]
+      "capabilities": [
+        "main"
+      ]
     }
   },
   "bundle": {
     "active": true,
-    "targets": "all"
+    "targets": "all",
+    "externalBin": [
+      "binaries/whitelist-hide-helper",
+      "binaries/whitelist-hide-watchdog"
+    ]
   }
 }
