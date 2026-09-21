@@ -62,9 +62,7 @@ fn main() {
         [group, action, manifest, binary] if group == "engine" && action == "verify" => {
             engine_verify(Path::new(manifest), Path::new(binary))
         }
-        [group, action, manifest, binary, args @ ..]
-            if group == "engine" && action == "launch" =>
-        {
+        [group, action, manifest, binary, args @ ..] if group == "engine" && action == "launch" => {
             engine_launch(Path::new(manifest), Path::new(binary), args)
         }
         [group, action] if group == "engine" && action == "stop" => engine_stop(),
@@ -358,7 +356,6 @@ fn config_verify(path: &Path) -> i32 {
     println!("strategy: {}", config.strategy.name);
     verify_paths(&resolved.manifest, &resolved.binary)
 }
-
 
 fn engine_launch(manifest_path: &Path, binary_path: &Path, args: &[String]) -> i32 {
     let store = StateStore::new(runtime_state_path());
