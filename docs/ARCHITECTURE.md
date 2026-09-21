@@ -1,144 +1,186 @@
 # Architecture
 
-## 1. Control plane vs. data plane
+## 1. Layers
 
-whitelist-hide is split into two layers.
+whitelist-hide separates presentation, application state and privileged networking.
 
-### Control plane
+```text
+CLI / Tauri desktop
+        |
+        v
+whitelist-hide-service
+        |
+        +-- BackendStatus / diagnostics
+        +-- ActionPlan / ActionResult
+        +-- runtime ownership journal
+        |
+        v
+whitelist-hide-core
+        |
+        +-- configuration
+        +-- artifact manifests + SHA-256
+        +-- engine-agnostic strategy schema
+        |
+        v
+platform backend
+        |
+        +-- macOS
+        +-- Windows
+        +-- Linux
+```
 
-Runs without administrator/root privileges whenever possible:
+The UI must not construct or execute arbitrary privileged shell commands.
 
-- parses configuration;
-- selects strategies;
-- validates domain/IP lists;
-- resolves artifact metadata;
-- reports status and diagnostics;
-- builds explicit action plans;
-- asks a platform backend to apply or remove a network plan.
+## 2. Runtime ownership
 
-The `whitelist-hide-service` crate is the application-facing facade. CLI and future GUI code should consume this service instead of calling operating-system commands directly.
+Mutating backend sessions must record what they own in a runtime journal.
 
-### Data plane
+The current journal can record:
 
-Contains the small privileged portion:
+- engine PID, executable path and verified SHA-256;
+- macOS pf anchor and utun interface;
+- Linux nftables table;
+- Windows service identifier;
+- platform and session identity.
 
-- installs packet interception;
-- starts/stops the packet engine;
-- owns firewall rules/routes/interfaces created by the project;
-- performs cleanup and state restoration.
+Cleanup and rollback use this ownership record instead of killing processes by a generic executable name or globally resetting networking.
 
-The UI must never construct privileged shell commands directly.
+## 3. Strategy model
 
-## 2. Application boundary
+Strategies are strict TOML data rather than separate scripts.
 
-The planned desktop application uses the same Rust service model as the CLI. A future Tauri shell should remain unprivileged and delegate only allow-listed mutating actions to a narrow privileged helper. See `docs/GUI.md`.
+A strategy contains:
 
-## 3. Platform backends
+- TCP/UDP rules;
+- optional port ranges;
+- optional domain filters;
+- ordered transforms such as split, multisplit, disorder and verified fake-packet template references.
 
-### Windows
+Unknown TOML fields and unsafe identifiers are rejected.
 
-Planned first implementation:
+The strategy schema is engine-agnostic. A later compiler maps this model to the exact argument/config format of a verified packet engine.
 
-- WinDivert-compatible interception;
-- explicit driver/service lifecycle;
-- no unrelated registry/TCP changes;
-- driver and engine version/hash reporting;
-- cleanup scoped to services and rules created by whitelist-hide.
-
-The Flowseal Windows reference currently launches `winws.exe` with strategy-specific arguments and uses WinDivert. Its service manager also contains host-wide repair/configuration operations. We keep packet strategy and host repair separate.
+## 4. Platform backends
 
 ### macOS
 
-Current foundation:
+Implemented foundation:
 
-- read-only inspection of default route, pf, utun interfaces, keepinit and privilege state;
-- dedicated pf anchor name `com.whitelisthide`;
-- explicit start/stop/cleanup action plans;
-- executable cleanup limited to flushing the project-owned pf anchor;
-- no global pf disable/reset;
-- start remains disabled until engine ownership and utun lifecycle tracking exist.
+- inspect default route and gateway;
+- inspect pf state;
+- inspect existing utun interfaces;
+- inspect `net.inet.tcp.keepinit`;
+- inspect current privilege level;
+- inspect dedicated `com.whitelisthide` pf anchor;
+- generate explicit start/stop/cleanup plans;
+- execute only scoped pf-anchor cleanup.
 
-Next macOS implementation:
+The next mutation milestone is a verified engine session with owned utun detection, runtime journaling and transactional rollback.
 
-- verified engine launch;
-- project-owned utun transport;
-- transactional state capture and rollback;
-- launchd/helper integration for privileged mutations.
+### Windows
+
+Implemented foundation:
+
+- inspect network-interface availability;
+- inspect WinDivert service state;
+- generate start/stop/cleanup plans.
+
+Planned mutation path:
+
+- verify exact WinDivert and engine artifacts;
+- start only the pinned driver/service;
+- record process/service ownership;
+- rollback only project-owned resources.
 
 ### Linux
 
-Planned first implementation:
+Implemented foundation:
 
-- nftables by default;
-- NFQUEUE for userspace packet processing;
-- dedicated table/chain names;
-- atomic cleanup;
-- iptables compatibility only where required.
+- inspect default route;
+- inspect nftables availability/state;
+- generate start/stop/cleanup plans.
 
-## 4. Strategy model
+Planned mutation path:
 
-Strategies are data, not separate shell scripts.
-
-```text
-Strategy
-  filters
-    protocols
-    ports
-    domains
-    ipsets
-  transforms
-    split
-    disorder
-    fake packet
-    sequence overlap
-  limits
-    packet count / cutoff
-  templates
-    explicit verified binary payload references
-```
-
-The same strategy description can then be compiled into backend/engine-specific arguments.
+- dedicated `whitelist_hide` nftables table;
+- NFQUEUE hand-off to verified userspace engine;
+- runtime ownership journal;
+- atomic rollback.
 
 ## 5. Artifact trust
 
-Third-party privileged artifacts are represented by metadata rather than by whatever happens to be in `bin/`.
+Privileged third-party components are external trust boundaries.
 
-The launcher refuses to execute an artifact if the installed bytes do not match the expected digest.
+Before execution an artifact must match its manifest:
 
-## 6. Transactional host changes
+- upstream/source identity;
+- version or commit;
+- license metadata;
+- target OS/architecture;
+- SHA-256.
 
-Every start operation should build a plan:
+No future downloader may execute bytes before successful verification.
+
+## 6. Transactional lifecycle
+
+A full start transaction is designed as:
 
 ```text
-inspect current state
+inspect current host state
         |
         v
-validate prerequisites
+verify config + strategy + artifacts
         |
         v
-apply project-owned changes
+create runtime journal
         |
         v
-start engine
+start owned engine
+        |
+        v
+claim owned network resources
+        |
+        v
+apply project-scoped routing/interception
         |
         v
 health check
+        |
+        +---- success ---> RUNNING
+        |
+        +---- failure ---> rollback in reverse order
 ```
 
-If any step fails, completed steps are rolled back in reverse order.
+Stop and recovery consult the journal and remove only recorded project-owned resources.
 
-Stop/uninstall use the recorded state rather than broad networking reset commands.
+## 7. Desktop boundary
 
-## 7. Development sequence
+The Tauri shell is an unprivileged client of the Rust service layer.
 
-1. Read-only CLI and architecture boundary. Done.
-2. Configuration schema + validation. Done.
-3. Artifact manifest + SHA-256 verification. Done.
-4. Application service boundary + macOS inspection/planning foundation. Done in this stage.
-5. Verified macOS engine + utun lifecycle.
-6. Windows backend prototype.
-7. Linux backend prototype.
-8. Strategy compiler.
-9. Automated connectivity/rollback tests.
-10. Tauri desktop UI and signed packaging.
-11. Mobile backend investigation.
+Read-only status and planning are already exposed as Tauri commands. Future network mutations must be delegated to a narrow privileged helper with an allow-listed protocol. The helper must never accept a free-form shell command.
+
+## 8. Release sequence
+
+Completed foundations:
+
+1. Rust workspace and read-only CLI.
+2. Strict configuration.
+3. Artifact manifest and SHA-256 verification.
+4. Shared application service layer.
+5. macOS diagnostics/planning.
+6. Strategy schema and validation.
+7. Runtime ownership journal.
+8. Windows/Linux diagnostics and plans.
+9. Tauri desktop shell.
+10. Cross-platform core and desktop CI.
+
+Remaining before `ver1.0`:
+
+1. Verified engine lifecycle on macOS.
+2. Owned utun + pf transaction and rollback.
+3. Pinned WinDivert lifecycle and Windows start/stop.
+4. nftables/NFQUEUE lifecycle and Linux start/stop.
+5. Strategy compiler for the chosen verified engine.
+6. Connectivity and crash-recovery tests.
+7. Desktop privileged-helper integration.
+8. Installers, signing/release packaging and user documentation.
