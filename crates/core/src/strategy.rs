@@ -252,10 +252,7 @@ positions = [1, 2]
 
     #[test]
     fn rejects_parent_directory_data_path() {
-        let input = VALID.replace(
-            "lists/general.txt",
-            "../private.txt",
-        );
+        let input = VALID.replace("lists/general.txt", "../private.txt");
         assert!(StrategyDefinition::parse(&input).is_err());
     }
 
@@ -267,10 +264,7 @@ positions = [1, 2]
 
     #[test]
     fn rejects_inverted_port_range() {
-        let input = VALID.replace(
-            "{ start = 80, end = 80 }",
-            "{ start = 443, end = 80 }",
-        );
+        let input = VALID.replace("{ start = 80, end = 80 }", "{ start = 443, end = 80 }");
         assert!(StrategyDefinition::parse(&input).is_err());
     }
 }
