@@ -10,6 +10,7 @@ path = "src/main.rs"
 
 [dependencies]
 whitelist-hide-core = { path = "../core" }
+whitelist-hide-controller = { path = "../controller" }
 whitelist-hide-runtime = { path = "../runtime" }
 whitelist-hide-service = { path = "../service" }
 whitelist-hide-macos = { path = "../platform-macos" }
