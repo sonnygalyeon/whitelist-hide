@@ -2,8 +2,8 @@ use std::fs;
 use std::net::IpAddr;
 use std::path::{Path, PathBuf};
 
-use crate::strategy::{DesyncStage, PortRange, StrategyDefinition, StrategyError};
 use crate::Platform;
+use crate::strategy::{DesyncStage, PortRange, StrategyDefinition, StrategyError};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum EngineTarget {
@@ -80,7 +80,10 @@ pub fn compile_strategy(
         ));
     }
     for path in &strategy.filters.domain_lists {
-        args.push(format!("--hostlist={}", resolve_list(base, path)?.display()));
+        args.push(format!(
+            "--hostlist={}",
+            resolve_list(base, path)?.display()
+        ));
     }
     for path in &strategy.filters.ip_lists {
         if matches!(target, EngineTarget::WindowsWinDivert) {
@@ -104,7 +107,8 @@ pub fn compile_strategy(
                 match fake_repeats {
                     Some(previous) if previous != *repeats => {
                         return Err(StrategyError::Invalid(
-                            "multiple fake stages with different repeat counts are ambiguous".to_owned(),
+                            "multiple fake stages with different repeat counts are ambiguous"
+                                .to_owned(),
                         ));
                     }
                     _ => fake_repeats = Some(*repeats),
@@ -175,10 +179,7 @@ pub fn target_for_current_platform(queue_num: u16) -> Option<EngineTarget> {
     }
 }
 
-fn merge_positions(
-    current: &mut Option<Vec<u16>>,
-    positions: &[u16],
-) -> Result<(), StrategyError> {
+fn merge_positions(current: &mut Option<Vec<u16>>, positions: &[u16]) -> Result<(), StrategyError> {
     match current {
         Some(existing) if existing.as_slice() != positions => Err(StrategyError::Invalid(
             "desync stages require different split positions and cannot share one zapret profile"
@@ -208,10 +209,8 @@ fn format_ranges(ranges: &[PortRange]) -> String {
 
 fn resolve_list(base: &Path, relative: &Path) -> Result<PathBuf, StrategyError> {
     let path = base.join(relative);
-    path.canonicalize().map_err(|source| StrategyError::Io {
-        path,
-        source,
-    })
+    path.canonicalize()
+        .map_err(|source| StrategyError::Io { path, source })
 }
 
 fn validate_lists(strategy: &StrategyDefinition, base: &Path) -> Result<(), StrategyError> {
@@ -252,9 +251,9 @@ fn validate_domain_list(path: &Path) -> Result<(), StrategyError> {
             && domain.len() <= 253
             && !domain.starts_with('.')
             && !domain.ends_with('.')
-            && domain.bytes().all(|byte| {
-                byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.')
-            });
+            && domain
+                .bytes()
+                .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.'));
 
         if !valid {
             return Err(StrategyError::Invalid(format!(
@@ -313,7 +312,7 @@ fn valid_ip_or_cidr(value: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::strategy::{StrategyFilters, StrategyDefinition};
+    use crate::strategy::{StrategyDefinition, StrategyFilters};
 
     #[test]
     fn formats_ranges_deterministically() {
@@ -341,8 +340,14 @@ mod tests {
             id: "test".to_owned(),
             description: String::new(),
             filters: StrategyFilters {
-                tcp_ports: vec![PortRange { start: 443, end: 443 }],
-                udp_ports: vec![PortRange { start: 443, end: 443 }],
+                tcp_ports: vec![PortRange {
+                    start: 443,
+                    end: 443,
+                }],
+                udp_ports: vec![PortRange {
+                    start: 443,
+                    end: 443,
+                }],
                 domain_lists: Vec::new(),
                 domain_exclude_lists: Vec::new(),
                 ip_lists: Vec::new(),
