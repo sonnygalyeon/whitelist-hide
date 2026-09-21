@@ -4132,6 +4132,7 @@ dependencies = [
 name = "whitelist-hide-desktop"
 version = "0.1.0"
 dependencies = [
+ "serde",
  "tauri",
  "tauri-build",
  "tauri-plugin-shell",
