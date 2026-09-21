@@ -28,3 +28,13 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - name: Compile example strategy
         run: cargo run -p whitelist-hide-cli -- strategy compile examples/strategy.example.toml ${{ matrix.engine }}
+
+
+  msrv:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install declared MSRV
+        uses: dtolnay/rust-toolchain@1.85.0
+      - name: Check workspace at MSRV
+        run: cargo check --workspace --all-targets --locked
