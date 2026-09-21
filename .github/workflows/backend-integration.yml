@@ -1,0 +1,207 @@
+name: backend-integration
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - "crates/orchestrator/**"
+      - "crates/runtime/**"
+      - "crates/core/**"
+      - "crates/cli/**"
+      - "third_party/upstream.lock.toml"
+      - "scripts/upstream_lock.py"
+      - ".github/workflows/backend-integration.yml"
+  pull_request:
+    paths:
+      - "crates/orchestrator/**"
+      - "crates/runtime/**"
+      - "crates/core/**"
+      - "crates/cli/**"
+      - "third_party/upstream.lock.toml"
+      - "scripts/upstream_lock.py"
+      - ".github/workflows/backend-integration.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  linux-lifecycle:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Install Linux dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends             build-essential zlib1g-dev libnetfilter-queue-dev libnfnetlink-dev             libmnl-dev libcap-dev nftables
+
+      - name: Build whitelist-hide
+        run: cargo build --locked -p whitelist-hide-cli
+
+      - name: Build pinned nfqws
+        id: engine
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 scripts/upstream_lock.py linux --github-output "$GITHUB_OUTPUT"
+          REPO="$(python3 scripts/upstream_lock.py linux --field repository)"
+          COMMIT="$(python3 scripts/upstream_lock.py linux --field commit)"
+          SUBDIR="$(python3 scripts/upstream_lock.py linux --field subdir)"
+          ARTIFACT="$(python3 scripts/upstream_lock.py linux --field artifact)"
+          git init upstream
+          git -C upstream remote add origin "$REPO"
+          git -C upstream fetch --depth 1 origin "$COMMIT"
+          git -C upstream checkout --detach "$COMMIT"
+          make -C "upstream/$SUBDIR"
+          mkdir -p integration/runtime
+          cp "upstream/$SUBDIR/$ARTIFACT" integration/runtime/nfqws
+          chmod 0755 integration/runtime/nfqws
+          SHA="$(sha256sum integration/runtime/nfqws | awk '{print $1}')"
+          echo "sha=$SHA" >> "$GITHUB_OUTPUT"
+
+      - name: Create trusted test configuration
+        shell: bash
+        run: |
+          cat > integration/engine.toml <<EOF
+          schema = 1
+          name = "nfqws"
+          version = "pinned"
+          source = "bol-van/zapret"
+          license = "MIT"
+
+          [artifact]
+          platform = "linux-x86_64"
+          filename = "nfqws"
+          sha256 = "${{ steps.engine.outputs.sha }}"
+          EOF
+
+          cat > integration/config.toml <<'EOF'
+          schema = 1
+
+          [engine]
+          manifest = "engine.toml"
+          binary = "runtime/nfqws"
+
+          [strategy]
+          name = "integration"
+          EOF
+
+          cat > integration/strategy.toml <<'EOF'
+          schema = 1
+          id = "integration"
+
+          [filters]
+          tcp_ports = [{ start = 65534, end = 65534 }]
+
+          [[desync]]
+          mode = "fake"
+          repeats = 1
+          EOF
+
+      - name: Start and stop Linux session
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo ./target/debug/whitelist-hide session start integration/config.toml integration/strategy.toml
+          sudo ./target/debug/whitelist-hide status
+          sudo nft list table inet whitelist_hide
+          sudo ./target/debug/whitelist-hide session stop
+          test ! -e /run/whitelist-hide/runtime-state.json
+          if sudo nft list table inet whitelist_hide 2>/dev/null; then
+            echo "owned nftables table leaked"
+            exit 1
+          fi
+
+  macos-lifecycle:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Build whitelist-hide
+        run: cargo build --locked -p whitelist-hide-cli
+
+      - name: Build pinned utunws
+        id: engine
+        shell: bash
+        run: |
+          set -euo pipefail
+          REPO="$(python3 scripts/upstream_lock.py macos --field repository)"
+          COMMIT="$(python3 scripts/upstream_lock.py macos --field commit)"
+          SUBDIR="$(python3 scripts/upstream_lock.py macos --field subdir)"
+          ARTIFACT="$(python3 scripts/upstream_lock.py macos --field artifact)"
+          git init upstream
+          git -C upstream remote add origin "$REPO"
+          git -C upstream fetch --depth 1 origin "$COMMIT"
+          git -C upstream checkout --detach "$COMMIT"
+          export SDKROOT="$(xcrun --sdk macosx --show-sdk-path)"
+          make -C "upstream/$SUBDIR" mac
+          mkdir -p integration/runtime
+          cp "upstream/$SUBDIR/$ARTIFACT" integration/runtime/utunws
+          chmod 0755 integration/runtime/utunws
+          SHA="$(shasum -a 256 integration/runtime/utunws | awk '{print $1}')"
+          ARCH="$(uname -m)"
+          if [ "$ARCH" = "arm64" ]; then
+            PLATFORM="macos-aarch64"
+          else
+            PLATFORM="macos-x86_64"
+          fi
+          echo "sha=$SHA" >> "$GITHUB_OUTPUT"
+          echo "platform=$PLATFORM" >> "$GITHUB_OUTPUT"
+
+      - name: Create trusted test configuration
+        shell: bash
+        run: |
+          cat > integration/engine.toml <<EOF
+          schema = 1
+          name = "utunws"
+          version = "pinned"
+          source = "Flowseal/zapret-mac-discord-youtube"
+          license = "MIT"
+
+          [artifact]
+          platform = "${{ steps.engine.outputs.platform }}"
+          filename = "utunws"
+          sha256 = "${{ steps.engine.outputs.sha }}"
+          EOF
+
+          cat > integration/config.toml <<'EOF'
+          schema = 1
+
+          [engine]
+          manifest = "engine.toml"
+          binary = "runtime/utunws"
+
+          [strategy]
+          name = "integration"
+          EOF
+
+          cat > integration/strategy.toml <<'EOF'
+          schema = 1
+          id = "integration"
+
+          [filters]
+          tcp_ports = [{ start = 65534, end = 65534 }]
+
+          [[desync]]
+          mode = "fake"
+          repeats = 1
+          EOF
+
+      - name: Start and stop macOS session
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo ./target/debug/whitelist-hide session start integration/config.toml integration/strategy.toml
+          sudo ./target/debug/whitelist-hide status
+          sudo /sbin/ifconfig utun50
+          sudo /sbin/pfctl -a com.whitelisthide -sr
+          sudo ./target/debug/whitelist-hide session stop
+          test ! -e /var/run/whitelist-hide/runtime-state.json
+          if sudo /sbin/pfctl -a com.whitelisthide -sr | grep -q '[^[:space:]]'; then
+            echo "owned pf anchor leaked rules"
+            exit 1
+          fi
