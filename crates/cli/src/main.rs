@@ -56,14 +56,10 @@ fn main() {
         [group, action, manifest, binary] if group == "engine" && action == "verify" => {
             engine_verify(Path::new(manifest), Path::new(binary))
         }
-        [group, platform, action]
-            if group == "backend" && action == "inspect" =>
-        {
+        [group, platform, action] if group == "backend" && action == "inspect" => {
             backend_inspect(platform)
         }
-        [group, platform, plan, action]
-            if group == "backend" && plan == "plan" =>
-        {
+        [group, platform, plan, action] if group == "backend" && plan == "plan" => {
             backend_plan(platform, action)
         }
         [group, platform, action]
@@ -353,11 +349,19 @@ fn print_verification(report: &VerificationReport) -> i32 {
     println!("actual SHA-256:   {}", report.actual_sha256);
     println!(
         "integrity: {}",
-        if report.integrity_ok() { "OK" } else { "FAILED" }
+        if report.integrity_ok() {
+            "OK"
+        } else {
+            "FAILED"
+        }
     );
     println!(
         "platform: {}",
-        if report.platform_ok() { "OK" } else { "MISMATCH" }
+        if report.platform_ok() {
+            "OK"
+        } else {
+            "MISMATCH"
+        }
     );
 
     if report.trusted() {
