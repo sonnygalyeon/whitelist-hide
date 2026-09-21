@@ -1,6 +1,6 @@
 schema = 1
 id = "general-simple-fake"
-description = "Initial structured example. This file is validated but not yet compiled into engine arguments."
+description = "Initial structured example compiled deterministically for nfqws/utunws/winws."
 
 [filters]
 tcp_ports = [
