@@ -68,6 +68,28 @@ jobs:
         working-directory: apps/desktop
         run: npm run tauri:build
 
+      - name: Checksum desktop bundle on Unix
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd apps/desktop/src-tauri/target/release/bundle
+          find . -type f ! -name SHA256SUMS -print0 | sort -z | xargs -0 shasum -a 256 > SHA256SUMS
+
+      - name: Checksum desktop bundle on Windows
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $root = Resolve-Path apps/desktop/src-tauri/target/release/bundle
+          Get-ChildItem $root -Recurse -File |
+            Where-Object { $_.Name -ne "SHA256SUMS" } |
+            Sort-Object FullName |
+            ForEach-Object {
+              $hash = (Get-FileHash $_.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
+              $relative = [System.IO.Path]::GetRelativePath($root, $_.FullName).Replace('\', '/')
+              "$hash  $relative"
+            } | Set-Content -Encoding ascii (Join-Path $root "SHA256SUMS")
+
       - name: Upload Tauri bundles
         uses: actions/upload-artifact@v4
         with:
