@@ -7,6 +7,7 @@ rust-version.workspace = true
 [dependencies]
 whitelist-hide-core = { path = "../core" }
 whitelist-hide-service = { path = "../service" }
+whitelist-hide-runtime = { path = "../runtime" }
 
 [lints]
 workspace = true
