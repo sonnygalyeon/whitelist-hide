@@ -86,8 +86,21 @@ fn is_elevated() -> bool {
 
 #[cfg(target_os = "windows")]
 fn is_elevated() -> bool {
-    Command::new("net")
-        .arg("session")
+    const SCRIPT: &str = concat!(
+        "$principal = New-Object Security.Principal.WindowsPrincipal(",
+        "[Security.Principal.WindowsIdentity]::GetCurrent()); ",
+        "if ($principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) ",
+        "{ exit 0 } else { exit 1 }"
+    );
+
+    Command::new("powershell.exe")
+        .args([
+            "-NoLogo",
+            "-NoProfile",
+            "-NonInteractive",
+            "-Command",
+            SCRIPT,
+        ])
         .stdout(Stdio::null())
         .stderr(Stdio::null())
         .status()
