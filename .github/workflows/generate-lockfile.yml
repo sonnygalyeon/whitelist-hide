@@ -23,3 +23,23 @@ jobs:
           echo "===WHITELIST_HIDE_CARGO_LOCK_BEGIN==="
           cat Cargo.lock
           echo "===WHITELIST_HIDE_CARGO_LOCK_END==="
+
+
+  frontend-lock:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: apps/desktop
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Generate frontend lockfile
+        run: npm install --package-lock-only --ignore-scripts
+      - name: Print frontend lockfile for review
+        shell: bash
+        run: |
+          echo "===WHITELIST_HIDE_PACKAGE_LOCK_BEGIN==="
+          cat package-lock.json
+          echo "===WHITELIST_HIDE_PACKAGE_LOCK_END==="
