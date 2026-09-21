@@ -32,7 +32,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          if git diff --quiet -- Cargo.lock apps/desktop/package-lock.json; then
+          if [ -z "$(git status --porcelain -- Cargo.lock apps/desktop/package-lock.json)" ]; then
             exit 0
           fi
           git config user.name "github-actions[bot]"
