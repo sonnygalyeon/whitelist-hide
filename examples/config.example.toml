@@ -9,3 +9,14 @@ binary = "runtime/engine.bin"
 
 [strategy]
 name = "general-simple-fake"
+
+# Optional additional privileged artifacts, especially useful for Windows bundles.
+# Each dependency is independently verified before a session may start.
+#
+# [[engine.dependencies]]
+# manifest = "windivert-dll.toml"
+# binary = "runtime/WinDivert.dll"
+#
+# [[engine.dependencies]]
+# manifest = "windivert-driver.toml"
+# binary = "runtime/WinDivert64.sys"

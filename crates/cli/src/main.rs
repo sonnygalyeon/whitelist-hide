@@ -370,6 +370,14 @@ fn config_validate(path: &Path) -> i32 {
             println!("strategy: {}", config.strategy.name);
             println!("engine manifest: {}", resolved.manifest.display());
             println!("engine binary: {}", resolved.binary.display());
+            println!("engine dependencies: {}", resolved.dependencies.len());
+            for dependency in &resolved.dependencies {
+                println!(
+                    "dependency: {} <- {}",
+                    dependency.binary.display(),
+                    dependency.manifest.display()
+                );
+            }
             0
         }
         Err(error) => {
@@ -393,7 +401,21 @@ fn config_verify(path: &Path) -> i32 {
     let resolved = config.resolve_engine_paths(path);
     println!("config: OK");
     println!("strategy: {}", config.strategy.name);
-    verify_paths(&resolved.manifest, &resolved.binary)
+
+    let primary = verify_paths(&resolved.manifest, &resolved.binary);
+    if primary != 0 {
+        return primary;
+    }
+
+    for dependency in &resolved.dependencies {
+        let code = verify_paths(&dependency.manifest, &dependency.binary);
+        if code != 0 {
+            return code;
+        }
+    }
+
+    println!("bundle trust: VERIFIED");
+    0
 }
 
 fn engine_launch(manifest_path: &Path, binary_path: &Path, args: &[String]) -> i32 {
