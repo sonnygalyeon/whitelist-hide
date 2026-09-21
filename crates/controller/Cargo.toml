@@ -5,6 +5,7 @@ edition.workspace = true
 rust-version.workspace = true
 
 [dependencies]
+serde = { version = "1", features = ["derive"] }
 whitelist-hide-core = { path = "../core" }
 whitelist-hide-runtime = { path = "../runtime" }
 whitelist-hide-macos = { path = "../platform-macos" }
