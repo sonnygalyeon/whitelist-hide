@@ -19,6 +19,7 @@ use whitelist_hide_runtime::{
     EngineLaunchOptions, EngineRuntimeError, RuntimePhase, StateStore,
     launch_verified_engine_with_options, recorded_engine_alive, stop_recorded_engine,
 };
+use whitelist_hide_windows::windivert_service_running;
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 pub struct SessionReport {
@@ -202,7 +203,7 @@ impl SessionController {
                 .arg(UTUN_INTERFACE)
                 .output()
                 .is_ok_and(|output| output.status.success()),
-            Platform::Windows => true,
+            Platform::Windows => windivert_service_running().unwrap_or(false),
             Platform::Unsupported => false,
         };
 
