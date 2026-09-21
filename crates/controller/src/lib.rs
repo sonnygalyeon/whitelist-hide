@@ -50,6 +50,34 @@ struct PreparedSession {
     binary: PathBuf,
 }
 
+pub fn default_config_path() -> PathBuf {
+    match Platform::detect() {
+        Platform::Windows => std::env::var_os("APPDATA")
+            .map(PathBuf::from)
+            .unwrap_or_else(|| PathBuf::from("."))
+            .join("whitelist-hide")
+            .join("config.toml"),
+        Platform::MacOS => std::env::var_os("HOME")
+            .map(PathBuf::from)
+            .unwrap_or_else(|| PathBuf::from("."))
+            .join("Library")
+            .join("Application Support")
+            .join("whitelist-hide")
+            .join("config.toml"),
+        Platform::Linux => std::env::var_os("XDG_CONFIG_HOME")
+            .map(PathBuf::from)
+            .or_else(|| {
+                std::env::var_os("HOME")
+                    .map(PathBuf::from)
+                    .map(|home| home.join(".config"))
+            })
+            .unwrap_or_else(|| PathBuf::from("."))
+            .join("whitelist-hide")
+            .join("config.toml"),
+        Platform::Unsupported => PathBuf::from("config.toml"),
+    }
+}
+
 pub fn runtime_state_path() -> PathBuf {
     match Platform::detect() {
         Platform::Windows => std::env::var_os("PROGRAMDATA")
