@@ -1,0 +1,92 @@
+name: windows-engine-bootstrap
+
+on:
+  push:
+    paths:
+      - ".github/workflows/windows-engine-bootstrap.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Cygwin toolchain
+        shell: pwsh
+        run: |
+          choco install cygwin -y --params "/InstallDir:C:\cygwin64 /NoStartMenu"
+          & C:\cygwin64\cygwinsetup.exe -q -P gcc-core,make,zlib-devel
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Fetch exact zapret upstream
+        shell: pwsh
+        run: |
+          $lines = python scripts/upstream_lock.py windows
+          $vars = @{}
+          foreach ($line in $lines) {
+            $key, $value = $line -split '=', 2
+            $vars[$key] = $value
+          }
+          git init upstream
+          git -C upstream remote add origin $vars.repository
+          git -C upstream fetch --depth 1 origin $vars.commit
+          if ((git -C upstream rev-parse FETCH_HEAD).Trim() -ne $vars.commit) { throw "commit mismatch" }
+          git -C upstream checkout --detach $vars.commit
+
+      - name: Build winws from pinned source
+        shell: pwsh
+        run: |
+          $workspace = $env:GITHUB_WORKSPACE.Replace('\','/').Replace('C:','/cygdrive/c').Replace('D:','/cygdrive/d')
+          & C:\cygwin64\bin\bash.exe -lc "cd '$workspace/upstream/nfq' && make cygwin64"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          if (!(Test-Path upstream\nfq\winws.exe)) { throw "winws.exe missing" }
+
+      - name: Fetch official signed WinDivert 2.2.2-A
+        shell: pwsh
+        run: |
+          $url = "https://github.com/basil00/WinDivert/releases/download/v2.2.2/WinDivert-2.2.2-A.zip"
+          Invoke-WebRequest -Uri $url -OutFile WinDivert-2.2.2-A.zip
+          $hash = (Get-FileHash WinDivert-2.2.2-A.zip -Algorithm SHA256).Hash.ToLowerInvariant()
+          "WINDIVERT_ZIP_SHA256=$hash" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          Write-Host "WinDivert-2.2.2-A.zip SHA256=$hash"
+          Expand-Archive WinDivert-2.2.2-A.zip -DestinationPath windivert
+
+      - name: Assemble Windows runtime
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force dist\windows | Out-Null
+          Copy-Item upstream\nfq\winws.exe dist\windows\winws.exe
+          Copy-Item C:\cygwin64\bin\cygwin1.dll dist\windows\cygwin1.dll
+          $dll = Get-ChildItem windivert -Recurse -Filter WinDivert.dll |
+            Where-Object { $_.FullName -match '[\\/]x64[\\/]' } | Select-Object -First 1
+          $sys = Get-ChildItem windivert -Recurse -Filter WinDivert64.sys | Select-Object -First 1
+          if (!$dll -or !$sys) { throw "WinDivert runtime files missing" }
+          Copy-Item $dll.FullName dist\windows\WinDivert.dll
+          Copy-Item $sys.FullName dist\windows\WinDivert64.sys
+
+          Get-ChildItem dist\windows | ForEach-Object {
+            $hash = (Get-FileHash $_.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
+            "$hash  $($_.Name)"
+          } | Set-Content -Encoding ascii dist\windows\SHA256SUMS
+
+          @(
+            "zapret_commit=d437963452674faadfd45adcd62466272b5a2fcd"
+            "windivert_release=v2.2.2"
+            "windivert_asset_id=78510020"
+            "windivert_zip_sha256=$env:WINDIVERT_ZIP_SHA256"
+            "builder=github-actions/windows-latest"
+          ) | Set-Content -Encoding ascii dist\windows\PROVENANCE.txt
+
+          Get-Content dist\windows\SHA256SUMS
+          Get-Content dist\windows\PROVENANCE.txt
+
+      - name: Upload bootstrap runtime
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-engine-bootstrap
+          path: dist/windows/
+          if-no-files-found: error
