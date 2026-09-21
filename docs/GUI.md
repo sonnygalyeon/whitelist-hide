@@ -1,58 +1,72 @@
 # Application / GUI architecture
 
-whitelist-hide is intended to become a normal desktop application, not a collection of terminal scripts.
+whitelist-hide uses a Tauri 2 desktop shell on top of the same Rust diagnostics and backend model used by the CLI.
 
-## UI technology
-
-The planned desktop shell is Tauri 2. The existing Rust crates remain the application logic; the UI is a client of the same service layer used by the CLI.
-
-Planned shape:
+## Current boundary
 
 ```text
-Tauri UI
-   |
-   v
-AppService
-   |
-   +-- configuration
-   +-- artifact trust
-   +-- diagnostics
-   +-- action planning
-   |
-   v
-platform backend
+WebView / JavaScript
+        |
+        | fixed Tauri commands only
+        v
+Tauri Rust process (unprivileged by design)
+        |
+        +-- backend_status: read-only AppService diagnostics
+        |
+        +-- session_start / session_stop / session_health
+                |
+                | direct process argv, no shell string
+                v
+        whitelist-hide-helper
+                |
+                v
+        SessionController
+                |
+        +-------+--------+
+        |       |        |
+      macOS   Linux   Windows
 ```
 
-## Privilege boundary
+The UI does not receive a generic command executor. It cannot submit an arbitrary shell command to the helper.
 
-The graphical application itself should not run permanently as Administrator/root.
+## Helper protocol
 
-Mutating operations will eventually be delegated to a small privileged helper with a narrow API:
+The bundled helper accepts only:
 
 ```text
-unprivileged GUI
-      |
-      | structured request
-      v
-privileged helper
-      |
-      +-- verify request
-      +-- execute allow-listed backend action
-      +-- return structured result
+start <CONFIG> <STRATEGY>
+stop
+health
+watchdog   # internal child operation
 ```
 
-The helper must not expose arbitrary shell execution. The UI must never send a free-form command string to run as root.
+Configuration and strategy paths are passed as process arguments, not interpolated into a privileged shell string.
 
-## Desktop targets
+## Privilege elevation
 
-- Windows: Tauri application + narrowly scoped Windows service/helper.
-- macOS: Tauri application + privileged helper/LaunchDaemon only for mutating operations.
-- Linux: Tauri application + polkit/systemd helper where required.
+The helper binary is bundled separately so the WebView and normal GUI process do not need to run permanently as root/Administrator.
+
+The remaining v1 task is OS-native elevation/installation:
+
+- Windows: install/authorize the narrow helper without elevating the WebView;
+- macOS: privileged helper/LaunchDaemon authorization;
+- Linux: polkit/systemd-style authorization where required.
+
+Until this is installed, direct helper invocation from an ordinary desktop session can fail with an OS permission error. This is intentional and is not hidden by falling back to broad shell elevation.
+
+## UI surface
+
+The current UI exposes:
+
+- backend state and diagnostics;
+- config path;
+- strategy path;
+- Start;
+- Stop;
+- Health.
+
+Logs/settings/installer UX remain release-gate work.
 
 ## Mobile
 
-Android and iOS can share parts of the Tauri/Rust application model, but packet interception is a separate platform problem. Mobile support will therefore reuse configuration, trust, diagnostics and UI concepts while using mobile-specific networking backends.
-
-## Interface design
-
-Visual design is intentionally postponed until the backend state model is stable. The UI should be designed around structured state such as connection status, selected strategy, backend health, diagnostics, logs and explicit start/stop actions rather than around shell output.
+Android and iOS may reuse configuration, trust, compiler and UI concepts, but packet interception requires separate mobile-specific backends and is not part of desktop v1.
