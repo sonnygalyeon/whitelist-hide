@@ -4,6 +4,10 @@ use std::path::{Path, PathBuf};
 use whitelist_hide_core::artifact::{ArtifactManifest, VerificationReport, verify_file};
 use whitelist_hide_core::config::AppConfig;
 use whitelist_hide_core::{DoctorReport, Platform};
+use whitelist_hide_macos::MacOsBackend;
+use whitelist_hide_service::{
+    ActionPlan, AppService, BackendAction, BackendState, BackendStatus, DiagnosticLevel,
+};
 
 fn main() {
     let args: Vec<String> = env::args().skip(1).collect();
@@ -46,6 +50,29 @@ fn main() {
         [group, action, manifest, binary] if group == "engine" && action == "verify" => {
             engine_verify(Path::new(manifest), Path::new(binary))
         }
+        [group, platform, action]
+            if group == "backend" && platform == "macos" && action == "inspect" =>
+        {
+            macos_inspect()
+        }
+        [group, platform, plan, action]
+            if group == "backend" && platform == "macos" && plan == "plan" =>
+        {
+            macos_plan(action)
+        }
+        [group, platform, action]
+            if group == "backend" && platform == "macos" && action == "cleanup" =>
+        {
+            macos_plan("cleanup")
+        }
+        [group, platform, action, flag]
+            if group == "backend"
+                && platform == "macos"
+                && action == "cleanup"
+                && flag == "--apply" =>
+        {
+            macos_cleanup_apply()
+        }
         _ => {
             eprintln!("invalid command or arguments\n");
             help();
@@ -63,13 +90,13 @@ fn doctor() {
     println!("platform: {}", report.platform);
     println!("architecture: {}", report.architecture);
     println!("planned interceptor: {}", report.interceptor);
-    println!("network changes: disabled (safe bootstrap stage)");
+    println!("network changes: guarded by platform backend plans");
 
     match report.platform {
         Platform::Windows => {
             println!("next backend milestone: driver provenance + WinDivert adapter")
         }
-        Platform::MacOS => println!("next backend milestone: reversible pf anchor + utun adapter"),
+        Platform::MacOS => println!("macOS backend: inspection and scoped pf cleanup available"),
         Platform::Linux => println!("next backend milestone: reversible nftables/NFQUEUE adapter"),
         Platform::Unsupported => println!("backend: unsupported platform"),
     }
@@ -79,6 +106,108 @@ fn status() {
     println!("state: stopped");
     println!("engine: not configured");
     println!("system modifications: none");
+}
+
+fn macos_inspect() -> i32 {
+    let service = AppService::new(MacOsBackend::system());
+
+    match service.status() {
+        Ok(status) => {
+            print_backend_status(&status);
+            if status.state == BackendState::Unsupported {
+                4
+            } else {
+                0
+            }
+        }
+        Err(error) => {
+            eprintln!("macOS backend inspection failed: {error}");
+            2
+        }
+    }
+}
+
+fn macos_plan(action: &str) -> i32 {
+    let action = match parse_backend_action(action) {
+        Some(action) => action,
+        None => {
+            eprintln!("unknown backend action: {action}");
+            return 2;
+        }
+    };
+
+    let service = AppService::new(MacOsBackend::system());
+    match service.plan(action) {
+        Ok(plan) => {
+            print_action_plan(&plan);
+            0
+        }
+        Err(error) => {
+            eprintln!("cannot build macOS backend plan: {error}");
+            4
+        }
+    }
+}
+
+fn macos_cleanup_apply() -> i32 {
+    let service = AppService::new(MacOsBackend::system());
+
+    match service.execute(BackendAction::Cleanup) {
+        Ok(result) => {
+            println!("action: {:?}", result.action);
+            println!("changed: {}", result.changed);
+            println!("{}", result.message);
+            0
+        }
+        Err(error) => {
+            eprintln!("cleanup failed: {error}");
+            eprintln!("hint: this operation requires sufficient privileges to run pfctl");
+            5
+        }
+    }
+}
+
+fn parse_backend_action(action: &str) -> Option<BackendAction> {
+    match action {
+        "start" => Some(BackendAction::Start),
+        "stop" => Some(BackendAction::Stop),
+        "cleanup" => Some(BackendAction::Cleanup),
+        _ => None,
+    }
+}
+
+fn print_backend_status(status: &BackendStatus) {
+    println!("platform: {}", status.platform);
+    println!("available: {}", status.available);
+    println!("state: {:?}", status.state);
+
+    for item in &status.diagnostics {
+        let level = match item.level {
+            DiagnosticLevel::Ok => "ok",
+            DiagnosticLevel::Info => "info",
+            DiagnosticLevel::Warning => "warn",
+            DiagnosticLevel::Error => "error",
+        };
+        println!("[{level}] {}: {}", item.label, item.value);
+        if let Some(detail) = &item.detail {
+            println!("       {detail}");
+        }
+    }
+}
+
+fn print_action_plan(plan: &ActionPlan) {
+    println!("plan: {}", plan.id);
+    println!("title: {}", plan.title);
+    println!("requires admin: {}", plan.requires_admin);
+    println!("mutates network: {}", plan.mutates_network);
+    println!("executable now: {}", plan.executable_now);
+
+    for (index, step) in plan.steps.iter().enumerate() {
+        println!("{}. {}", index + 1, step.description);
+        if let Some(command) = &step.command_preview {
+            println!("   command: {command}");
+        }
+    }
 }
 
 fn config_validate(path: &Path) -> i32 {
@@ -206,7 +335,7 @@ fn config_path() -> PathBuf {
 
 fn help() {
     println!(
-        "whitelist-hide {}\n\nUSAGE:\n    whitelist-hide <COMMAND>\n\nCOMMANDS:\n    doctor\n        Read-only platform diagnostics\n\n    status\n        Show current engine state\n\n    config-path\n        Show the default configuration path\n\n    config validate [PATH]\n        Validate a TOML configuration without touching the network\n\n    config verify [PATH]\n        Validate configuration and verify its engine artifact\n\n    engine verify <MANIFEST> <BINARY>\n        Verify an artifact SHA-256 and platform against its manifest\n\n    version\n        Show version\n\n    help\n        Show this help",
+        "whitelist-hide {}\n\nUSAGE:\n    whitelist-hide <COMMAND>\n\nCOMMANDS:\n    doctor\n        Read-only platform diagnostics\n\n    status\n        Show current engine state\n\n    config-path\n        Show the default configuration path\n\n    config validate [PATH]\n        Validate a TOML configuration without touching the network\n\n    config verify [PATH]\n        Validate configuration and verify its engine artifact\n\n    engine verify <MANIFEST> <BINARY>\n        Verify an artifact SHA-256 and platform against its manifest\n\n    backend macos inspect\n        Inspect route, pf, utun and relevant macOS state\n\n    backend macos plan <start|stop|cleanup>\n        Print the exact high-level backend plan without applying it\n\n    backend macos cleanup\n        Preview scoped cleanup\n\n    backend macos cleanup --apply\n        Flush only the whitelist-hide pf anchor (requires privileges)\n\n    version\n        Show version\n\n    help\n        Show this help",
         env!("CARGO_PKG_VERSION")
     );
 }

@@ -1,16 +1,11 @@
 [package]
-name = "whitelist-hide-cli"
+name = "whitelist-hide-macos"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 
-[[bin]]
-name = "whitelist-hide"
-path = "src/main.rs"
-
 [dependencies]
 whitelist-hide-core = { path = "../core" }
-whitelist-hide-macos = { path = "../platform-macos" }
 whitelist-hide-service = { path = "../service" }
 
 [lints]
