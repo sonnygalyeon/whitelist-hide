@@ -51,6 +51,7 @@ jobs:
           ARTIFACT: ${{ steps.upstream.outputs.artifact }}
           BUILD_TARGET: ${{ steps.upstream.outputs.build_target }}
           LICENSE_NAME: ${{ steps.upstream.outputs.license }}
+          EXPECTED_SHA256: ${{ steps.upstream.outputs.expected_sha256 }}
         run: |
           set -euo pipefail
           export SDKROOT="$(xcrun --sdk macosx --show-sdk-path)"
@@ -58,6 +59,8 @@ jobs:
           test -x "upstream/$SUBDIR/$ARTIFACT"
           mkdir -p dist/macos
           cp "upstream/$SUBDIR/$ARTIFACT" "dist/macos/$ARTIFACT"
+          actual="$(shasum -a 256 "dist/macos/$ARTIFACT" | awk '{print $1}')"
+          test "$actual" = "$EXPECTED_SHA256"
           shasum -a 256 "dist/macos/$ARTIFACT" | tee dist/macos/SHA256SUMS
           {
             echo "source_commit=$COMMIT"
@@ -113,12 +116,15 @@ jobs:
           SUBDIR: ${{ steps.upstream.outputs.subdir }}
           ARTIFACT: ${{ steps.upstream.outputs.artifact }}
           LICENSE_NAME: ${{ steps.upstream.outputs.license }}
+          EXPECTED_SHA256: ${{ steps.upstream.outputs.expected_sha256 }}
         run: |
           set -euo pipefail
           make -C "upstream/$SUBDIR"
           test -x "upstream/$SUBDIR/$ARTIFACT"
           mkdir -p dist/linux
           cp "upstream/$SUBDIR/$ARTIFACT" "dist/linux/$ARTIFACT"
+          actual="$(sha256sum "dist/linux/$ARTIFACT" | awk '{print $1}')"
+          test "$actual" = "$EXPECTED_SHA256"
           sha256sum "dist/linux/$ARTIFACT" | tee dist/linux/SHA256SUMS
           {
             echo "source_commit=$COMMIT"
@@ -201,6 +207,8 @@ jobs:
         env:
           COMMIT: ${{ steps.upstream.outputs.commit }}
           LICENSE_NAME: ${{ steps.upstream.outputs.license }}
+          EXPECTED_WINWS_SHA256: ${{ steps.upstream.outputs.winws_sha256 }}
+          EXPECTED_CYGWIN_SHA256: ${{ steps.upstream.outputs.cygwin1_sha256 }}
         run: |
           $ErrorActionPreference = "Stop"
           $cygWorkspace = (& "C:\cygwin64\bin\cygpath.exe" -u "$env:GITHUB_WORKSPACE").Trim()
@@ -219,6 +227,11 @@ jobs:
           Copy-Item (Join-Path "upstream" "${{ steps.upstream.outputs.license_path }}") dist/windows/LICENSE-ZAPRET.txt
 
           $files = @("winws.exe", "cygwin1.dll", "WinDivert.dll", "WinDivert64.sys")
+          $winwsHash = (Get-FileHash "dist/windows/winws.exe" -Algorithm SHA256).Hash.ToLowerInvariant()
+          $cygwinHash = (Get-FileHash "dist/windows/cygwin1.dll" -Algorithm SHA256).Hash.ToLowerInvariant()
+          if ($winwsHash -ne $env:EXPECTED_WINWS_SHA256.ToLowerInvariant()) { throw "winws.exe build checksum drift: $winwsHash" }
+          if ($cygwinHash -ne $env:EXPECTED_CYGWIN_SHA256.ToLowerInvariant()) { throw "cygwin1.dll checksum drift: $cygwinHash" }
+
           $sumLines = foreach ($name in $files) {
             $hash = (Get-FileHash "dist/windows/$name" -Algorithm SHA256).Hash.ToLowerInvariant()
             "$hash  $name"
