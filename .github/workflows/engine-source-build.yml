@@ -1,0 +1,134 @@
+name: engine-source-build
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - "third_party/upstream.lock.toml"
+      - "scripts/upstream_lock.py"
+      - ".github/workflows/engine-source-build.yml"
+  pull_request:
+    paths:
+      - "third_party/upstream.lock.toml"
+      - "scripts/upstream_lock.py"
+      - ".github/workflows/engine-source-build.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  macos-utunws:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Read pinned macOS upstream
+        id: upstream
+        shell: bash
+        run: python3 scripts/upstream_lock.py macos --github-output "$GITHUB_OUTPUT"
+
+      - name: Fetch exact upstream commit
+        shell: bash
+        env:
+          REPOSITORY: ${{ steps.upstream.outputs.repository }}
+          COMMIT: ${{ steps.upstream.outputs.commit }}
+          LICENSE_PATH: ${{ steps.upstream.outputs.license_path }}
+        run: |
+          set -euo pipefail
+          git init upstream
+          git -C upstream remote add origin "$REPOSITORY"
+          git -C upstream fetch --depth 1 origin "$COMMIT"
+          test "$(git -C upstream rev-parse FETCH_HEAD)" = "$COMMIT"
+          git -C upstream checkout --detach "$COMMIT"
+          test "$(git -C upstream rev-parse HEAD)" = "$COMMIT"
+          test -f "upstream/$LICENSE_PATH"
+
+      - name: Build utunws from source
+        shell: bash
+        env:
+          COMMIT: ${{ steps.upstream.outputs.commit }}
+          SUBDIR: ${{ steps.upstream.outputs.subdir }}
+          ARTIFACT: ${{ steps.upstream.outputs.artifact }}
+          BUILD_TARGET: ${{ steps.upstream.outputs.build_target }}
+          LICENSE_NAME: ${{ steps.upstream.outputs.license }}
+        run: |
+          set -euo pipefail
+          export SDKROOT="$(xcrun --sdk macosx --show-sdk-path)"
+          make -C "upstream/$SUBDIR" "$BUILD_TARGET"
+          test -x "upstream/$SUBDIR/$ARTIFACT"
+          mkdir -p dist/macos
+          cp "upstream/$SUBDIR/$ARTIFACT" "dist/macos/$ARTIFACT"
+          shasum -a 256 "dist/macos/$ARTIFACT" | tee dist/macos/SHA256SUMS
+          {
+            echo "source_commit=$COMMIT"
+            echo "license=$LICENSE_NAME"
+            echo "builder=github-actions/macos-latest"
+          } > dist/macos/PROVENANCE.txt
+          file "dist/macos/$ARTIFACT"
+
+      - name: Upload source-built macOS engine
+        uses: actions/upload-artifact@v4
+        with:
+          name: source-built-macos-utunws
+          path: dist/macos/
+          if-no-files-found: error
+
+  linux-nfqws:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Read pinned Linux upstream
+        id: upstream
+        shell: bash
+        run: python3 scripts/upstream_lock.py linux --github-output "$GITHUB_OUTPUT"
+
+      - name: Install build dependencies
+        shell: bash
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends             build-essential             zlib1g-dev             libnetfilter-queue-dev             libnfnetlink-dev             libmnl-dev
+
+      - name: Fetch exact upstream commit
+        shell: bash
+        env:
+          REPOSITORY: ${{ steps.upstream.outputs.repository }}
+          COMMIT: ${{ steps.upstream.outputs.commit }}
+          LICENSE_PATH: ${{ steps.upstream.outputs.license_path }}
+        run: |
+          set -euo pipefail
+          git init upstream
+          git -C upstream remote add origin "$REPOSITORY"
+          git -C upstream fetch --depth 1 origin "$COMMIT"
+          test "$(git -C upstream rev-parse FETCH_HEAD)" = "$COMMIT"
+          git -C upstream checkout --detach "$COMMIT"
+          test "$(git -C upstream rev-parse HEAD)" = "$COMMIT"
+          test -f "upstream/$LICENSE_PATH"
+
+      - name: Build nfqws from source
+        shell: bash
+        env:
+          COMMIT: ${{ steps.upstream.outputs.commit }}
+          SUBDIR: ${{ steps.upstream.outputs.subdir }}
+          ARTIFACT: ${{ steps.upstream.outputs.artifact }}
+          LICENSE_NAME: ${{ steps.upstream.outputs.license }}
+        run: |
+          set -euo pipefail
+          make -C "upstream/$SUBDIR"
+          test -x "upstream/$SUBDIR/$ARTIFACT"
+          mkdir -p dist/linux
+          cp "upstream/$SUBDIR/$ARTIFACT" "dist/linux/$ARTIFACT"
+          sha256sum "dist/linux/$ARTIFACT" | tee dist/linux/SHA256SUMS
+          {
+            echo "source_commit=$COMMIT"
+            echo "license=$LICENSE_NAME"
+            echo "builder=github-actions/ubuntu-latest"
+          } > dist/linux/PROVENANCE.txt
+          file "dist/linux/$ARTIFACT"
+
+      - name: Upload source-built Linux engine
+        uses: actions/upload-artifact@v4
+        with:
+          name: source-built-linux-nfqws
+          path: dist/linux/
+          if-no-files-found: error

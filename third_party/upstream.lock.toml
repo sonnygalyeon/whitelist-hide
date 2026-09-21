@@ -1,0 +1,31 @@
+schema = 1
+
+[macos]
+repository = "https://github.com/Flowseal/zapret-mac-discord-youtube.git"
+commit = "94c3b5125b4904ce2f6aec0e2197fe17f2fadf14"
+subdir = "nfq"
+artifact = "utunws"
+build_target = "mac"
+license = "MIT"
+license_path = "LICENSE"
+status = "source-build-enabled"
+
+[linux]
+repository = "https://github.com/bol-van/zapret.git"
+commit = "d437963452674faadfd45adcd62466272b5a2fcd"
+subdir = "nfq"
+artifact = "nfqws"
+build_target = "default"
+license = "MIT"
+license_path = "docs/LICENSE.txt"
+status = "source-build-enabled"
+
+[windows]
+repository = "https://github.com/bol-van/zapret.git"
+commit = "d437963452674faadfd45adcd62466272b5a2fcd"
+subdir = "nfq"
+artifact = "winws.exe"
+build_target = "cygwin64"
+license = "MIT"
+license_path = "docs/LICENSE.txt"
+status = "pinned-build-pending"
