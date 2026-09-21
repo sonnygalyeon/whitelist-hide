@@ -2,6 +2,7 @@ use std::error::Error;
 use std::fmt;
 use std::path::{Path, PathBuf};
 
+use serde::Serialize;
 use whitelist_hide_core::Platform;
 use whitelist_hide_core::artifact::{ArtifactManifest, verify_file};
 use whitelist_hide_core::config::AppConfig;
@@ -19,7 +20,7 @@ use whitelist_hide_runtime::{
     launch_verified_engine_with_options, recorded_engine_alive, stop_recorded_engine,
 };
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 pub struct SessionReport {
     pub platform: Platform,
     pub strategy: String,
@@ -27,11 +28,25 @@ pub struct SessionReport {
     pub state_path: PathBuf,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 pub struct HealthReport {
     pub running: bool,
     pub engine_alive: bool,
     pub owned_network_resource_present: bool,
+}
+
+#[must_use]
+pub fn default_state_path() -> PathBuf {
+    match Platform::detect() {
+        Platform::Windows => std::env::var_os("PROGRAMDATA")
+            .map(PathBuf::from)
+            .unwrap_or_else(|| PathBuf::from("."))
+            .join("whitelist-hide")
+            .join("runtime-state.json"),
+        Platform::MacOS => PathBuf::from("/var/run/whitelist-hide/runtime-state.json"),
+        Platform::Linux => PathBuf::from("/run/whitelist-hide/runtime-state.json"),
+        Platform::Unsupported => PathBuf::from("runtime-state.json"),
+    }
 }
 
 pub struct SessionController {
