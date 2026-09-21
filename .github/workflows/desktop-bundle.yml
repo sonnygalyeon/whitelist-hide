@@ -7,6 +7,7 @@ on:
       - "feature/final-release-candidate"
     paths:
       - ".github/workflows/desktop-bundle.yml"
+      - "apps/desktop/**"
 
 permissions:
   contents: read
