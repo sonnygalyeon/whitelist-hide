@@ -1,0 +1,16 @@
+schema = 1
+name = "general"
+description = "Example engine-agnostic DPI strategy"
+
+[[rules]]
+name = "https"
+protocol = "tcp"
+domains = ["youtube.com", "*.googlevideo.com"]
+
+[[rules.ports]]
+start = 443
+end = 443
+
+[[rules.actions]]
+kind = "split"
+position = 1

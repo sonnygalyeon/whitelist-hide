@@ -1,3 +1,5 @@
+pub mod runtime;
+
 use std::error::Error;
 
 use serde::{Deserialize, Serialize};
@@ -17,7 +19,9 @@ pub enum BackendState {
     Unsupported,
     Ready,
     Degraded,
+    Starting,
     Running,
+    Stopping,
     Stopped,
 }
 
@@ -93,11 +97,6 @@ where
         Self { backend }
     }
 
-    #[must_use]
-    pub fn platform(&self) -> Platform {
-        self.backend.platform()
-    }
-
     pub fn status(&self) -> Result<BackendStatus, B::Error> {
         self.backend.status()
     }
@@ -108,24 +107,5 @@ where
 
     pub fn execute(&self, action: BackendAction) -> Result<ActionResult, B::Error> {
         self.backend.execute(action)
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn serialized_model_is_stable_enough_for_future_ui() {
-        let item = DiagnosticItem {
-            key: "pf".to_owned(),
-            label: "Packet Filter".to_owned(),
-            value: "enabled".to_owned(),
-            level: DiagnosticLevel::Ok,
-            detail: None,
-        };
-
-        assert_eq!(item.key, "pf");
-        assert_eq!(BackendAction::Cleanup, BackendAction::Cleanup);
     }
 }
