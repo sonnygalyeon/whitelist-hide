@@ -133,11 +133,9 @@ impl StrategyAction {
                     "multisplit positions must be non-empty and positive in rule {rule}"
                 )))
             }
-            Self::Fake { template } if !safe_identifier(template) => {
-                Err(StrategyError::Invalid(format!(
-                    "invalid fake template identifier in rule {rule}"
-                )))
-            }
+            Self::Fake { template } if !safe_identifier(template) => Err(StrategyError::Invalid(
+                format!("invalid fake template identifier in rule {rule}"),
+            )),
             _ => Ok(()),
         }
     }
