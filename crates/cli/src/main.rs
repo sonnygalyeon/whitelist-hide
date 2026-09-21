@@ -76,12 +76,8 @@ fn main() {
         [group, action, path] if group == "strategy" && action == "compile" => {
             strategy_compile(Path::new(path))
         }
-        [group, action] if group == "run" && action == "start" => {
-            run_start(&config_path())
-        }
-        [group, action, path] if group == "run" && action == "start" => {
-            run_start(Path::new(path))
-        }
+        [group, action] if group == "run" && action == "start" => run_start(&config_path()),
+        [group, action, path] if group == "run" && action == "start" => run_start(Path::new(path)),
         [group, action] if group == "run" && action == "stop" => run_stop(),
         [group, action] if group == "run" && action == "status" => run_status(),
         [group, platform, action] if group == "backend" && action == "inspect" => {
@@ -336,7 +332,6 @@ fn strategy_validate(path: &Path) -> i32 {
         }
     }
 }
-
 
 fn strategy_compile(path: &Path) -> i32 {
     let strategy = match StrategyDefinition::load(path) {
