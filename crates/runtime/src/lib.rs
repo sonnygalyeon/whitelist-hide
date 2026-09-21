@@ -130,8 +130,7 @@ impl StateStore {
             })?;
         }
 
-        let bytes =
-            serde_json::to_vec_pretty(state).map_err(RuntimeStateError::Serialize)?;
+        let bytes = serde_json::to_vec_pretty(state).map_err(RuntimeStateError::Serialize)?;
         let temp = temp_path(&self.path);
 
         fs::write(&temp, bytes).map_err(|source| RuntimeStateError::Io {
@@ -175,9 +174,9 @@ fn temp_path(path: &Path) -> PathBuf {
 
 fn safe_token(value: &str) -> bool {
     !value.is_empty()
-        && value.bytes().all(|byte| {
-            byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.' | b':')
-        })
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.' | b':'))
 }
 
 #[derive(Debug)]
@@ -192,7 +191,11 @@ impl fmt::Display for RuntimeStateError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Io { path, source } => {
-                write!(f, "runtime state I/O failed at {}: {source}", path.display())
+                write!(
+                    f,
+                    "runtime state I/O failed at {}: {source}",
+                    path.display()
+                )
             }
             Self::Parse(source) => write!(f, "invalid runtime state JSON: {source}"),
             Self::Serialize(source) => write!(f, "cannot serialize runtime state: {source}"),
