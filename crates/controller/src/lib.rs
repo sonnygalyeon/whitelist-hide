@@ -250,7 +250,13 @@ impl SessionController {
             return Err(error.into());
         }
 
-        self.patch_owned_state(None, Some("inet.whitelist_hide"), None)
+        if let Err(error) = self.patch_owned_state(None, Some("inet.whitelist_hide"), None) {
+            let _ = remove_owned_table();
+            let _ = stop_recorded_engine(&self.state);
+            return Err(error);
+        }
+
+        Ok(())
     }
 
     fn start_macos(
@@ -290,7 +296,17 @@ impl SessionController {
 
         match result {
             Ok(token) => {
-                self.patch_owned_state(Some(UTUN_INTERFACE), Some(PF_ANCHOR), token.as_deref())
+                if let Err(error) =
+                    self.patch_owned_state(Some(UTUN_INTERFACE), Some(PF_ANCHOR), token.as_deref())
+                {
+                    let _ = clear_owned_pf_anchor();
+                    if let Some(token) = token.as_deref() {
+                        let _ = release_pf_token(token);
+                    }
+                    let _ = stop_recorded_engine(&self.state);
+                    return Err(error);
+                }
+                Ok(())
             }
             Err(error) => {
                 let _ = clear_owned_pf_anchor();
@@ -312,7 +328,12 @@ impl SessionController {
             env: Vec::new(),
         };
         launch_verified_engine_with_options(manifest, binary, &options, &self.state, session_id)?;
-        self.patch_owned_state(None, Some("windivert.session"), None)
+        if let Err(error) = self.patch_owned_state(None, Some("windivert.session"), None) {
+            let _ = stop_recorded_engine(&self.state);
+            return Err(error);
+        }
+
+        Ok(())
     }
 
     fn patch_owned_state(
