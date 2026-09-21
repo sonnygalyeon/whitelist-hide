@@ -1,0 +1,17 @@
+[package]
+name = "whitelist-hide-helper"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+
+[[bin]]
+name = "whitelist-hide-helper"
+path = "src/main.rs"
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+whitelist-hide-orchestrator = { path = "../orchestrator" }
+
+[lints]
+workspace = true

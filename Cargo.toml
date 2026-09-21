@@ -4,6 +4,7 @@ members = [
     "crates/core",
     "crates/runtime",
     "crates/orchestrator",
+    "crates/helper",
     "crates/service",
     "crates/platform-macos",
     "crates/platform-windows",
