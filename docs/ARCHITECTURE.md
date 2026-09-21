@@ -13,7 +13,10 @@ Runs without administrator/root privileges whenever possible:
 - validates domain/IP lists;
 - resolves artifact metadata;
 - reports status and diagnostics;
+- builds explicit action plans;
 - asks a platform backend to apply or remove a network plan.
+
+The `whitelist-hide-service` crate is the application-facing facade. CLI and future GUI code should consume this service instead of calling operating-system commands directly.
 
 ### Data plane
 
@@ -26,7 +29,11 @@ Contains the small privileged portion:
 
 The UI must never construct privileged shell commands directly.
 
-## 2. Platform backends
+## 2. Application boundary
+
+The planned desktop application uses the same Rust service model as the CLI. A future Tauri shell should remain unprivileged and delegate only allow-listed mutating actions to a narrow privileged helper. See `docs/GUI.md`.
+
+## 3. Platform backends
 
 ### Windows
 
@@ -42,15 +49,21 @@ The Flowseal Windows reference currently launches `winws.exe` with strategy-spec
 
 ### macOS
 
-Planned first implementation:
+Current foundation:
 
-- dedicated `pf` anchor;
-- a `utun` transport;
-- launchd only for explicitly enabled persistent mode;
-- capture and restore any sysctl changed by the backend;
-- robust cleanup on termination.
+- read-only inspection of default route, pf, utun interfaces, keepinit and privilege state;
+- dedicated pf anchor name `com.whitelisthide`;
+- explicit start/stop/cleanup action plans;
+- executable cleanup limited to flushing the project-owned pf anchor;
+- no global pf disable/reset;
+- start remains disabled until engine ownership and utun lifecycle tracking exist.
 
-The Flowseal macOS reference routes selected traffic through a `utun` interface with a dedicated pf anchor and a privileged launch daemon. That is a useful architectural reference, but our lifecycle/state tracking is independent.
+Next macOS implementation:
+
+- verified engine launch;
+- project-owned utun transport;
+- transactional state capture and rollback;
+- launchd/helper integration for privileged mutations.
 
 ### Linux
 
@@ -62,7 +75,7 @@ Planned first implementation:
 - atomic cleanup;
 - iptables compatibility only where required.
 
-## 3. Strategy model
+## 4. Strategy model
 
 Strategies are data, not separate shell scripts.
 
@@ -86,24 +99,13 @@ Strategy
 
 The same strategy description can then be compiled into backend/engine-specific arguments.
 
-## 4. Artifact trust
+## 5. Artifact trust
 
 Third-party privileged artifacts are represented by metadata rather than by whatever happens to be in `bin/`.
 
-Planned manifest concept:
-
-```toml
-name = "engine"
-version = "..."
-source = "https://..."
-license = "..."
-platform = "windows-x86_64"
-sha256 = "..."
-```
-
 The launcher refuses to execute an artifact if the installed bytes do not match the expected digest.
 
-## 5. Transactional host changes
+## 6. Transactional host changes
 
 Every start operation should build a plan:
 
@@ -127,17 +129,16 @@ If any step fails, completed steps are rolled back in reverse order.
 
 Stop/uninstall use the recorded state rather than broad networking reset commands.
 
-## 6. Development sequence
+## 7. Development sequence
 
-1. Read-only CLI and architecture boundary.
-2. Configuration schema + validation.
-3. Artifact manifest + SHA-256 verification.
-4. macOS backend prototype.
-5. Windows backend prototype.
-6. Linux backend prototype.
-7. Strategy compiler.
-8. Automated connectivity/rollback tests.
-9. Signed, reproducible release pipeline.
-10. GUI/mobile investigation.
-
-The ordering intentionally establishes trust and rollback before enabling packet modification.
+1. Read-only CLI and architecture boundary. Done.
+2. Configuration schema + validation. Done.
+3. Artifact manifest + SHA-256 verification. Done.
+4. Application service boundary + macOS inspection/planning foundation. Done in this stage.
+5. Verified macOS engine + utun lifecycle.
+6. Windows backend prototype.
+7. Linux backend prototype.
+8. Strategy compiler.
+9. Automated connectivity/rollback tests.
+10. Tauri desktop UI and signed packaging.
+11. Mobile backend investigation.

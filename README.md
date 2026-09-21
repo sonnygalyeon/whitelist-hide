@@ -2,30 +2,18 @@
 
 Cross-platform, auditable network filtering / DPI-evasion toolkit.
 
-> Status: early development. The repository currently contains the control-plane foundation. Packet interception backends are intentionally not enabled yet.
+> Status: early development. The project now has a shared application service layer plus a macOS inspection/planning backend. Full packet interception is not enabled yet.
 
 ## Goals
 
 - Windows, macOS and Linux from one project.
-- Clear separation between the control plane and privileged packet-processing backends.
+- A desktop application with one shared interface and backend model.
+- Clear separation between the unprivileged application and privileged packet-processing backends.
 - No telemetry.
 - No silent downloads.
 - No hidden system modifications.
 - Every privileged action should be inspectable and reversible.
 - Third-party engines and drivers must have explicit provenance, versions and integrity metadata.
-- Configuration should be portable between operating systems where the underlying capability exists.
-
-## Why this project exists
-
-Projects in this area often combine shell scripts, privileged services, drivers, prebuilt executables and binary packet templates in one bundle. That can work, but it makes auditing and troubleshooting harder.
-
-whitelist-hide takes a different approach:
-
-1. keep the core small and readable;
-2. isolate OS-specific privileged code;
-3. make system changes transactional and reversible;
-4. verify third-party artifacts before execution;
-5. expose diagnostics instead of modifying the host silently.
 
 ## Current commands
 
@@ -36,23 +24,30 @@ whitelist-hide config-path
 whitelist-hide config validate [PATH]
 whitelist-hide config verify [PATH]
 whitelist-hide engine verify <MANIFEST> <BINARY>
-whitelist-hide help
+
+whitelist-hide backend macos inspect
+whitelist-hide backend macos plan <start|stop|cleanup>
+whitelist-hide backend macos cleanup
+whitelist-hide backend macos cleanup --apply
 ```
 
-At this stage these commands do not alter network settings.
+The macOS cleanup apply command is deliberately narrow: it only flushes the dedicated `com.whitelisthide` pf anchor. It does not disable or reset global pf state.
 
-## Planned architecture
+## Planned application architecture
 
 ```text
-CLI / future GUI
+CLI / Tauri GUI
+      |
+      v
+whitelist-hide-service
       |
       v
 whitelist-hide-core
       |
       +-- configuration
-      +-- strategy model
-      +-- diagnostics
       +-- artifact trust
+      +-- diagnostics
+      +-- action plans
       |
       v
 platform backend
@@ -60,12 +55,9 @@ platform backend
       +-- Windows: WinDivert-compatible backend
       +-- macOS: utun + pf backend
       +-- Linux: netfilter/NFQUEUE backend
-      |
-      v
-packet engine
 ```
 
-The packet engine is deliberately an interface rather than a hard-coded binary. This lets us begin with a well-audited external implementation while preserving a path toward more native code later.
+See `docs/GUI.md` for the planned desktop privilege boundary.
 
 ## Development
 
@@ -89,7 +81,7 @@ No code from those projects is copied into this repository unless its license an
 
 ## Safety model
 
-See [SECURITY.md](SECURITY.md), [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) and [docs/ARTIFACTS.md](docs/ARTIFACTS.md).
+See `SECURITY.md`, `docs/ARCHITECTURE.md`, `docs/ARTIFACTS.md` and `docs/GUI.md`.
 
 ## License
 
