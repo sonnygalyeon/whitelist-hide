@@ -33,6 +33,9 @@ whitelist-hide takes a different approach:
 whitelist-hide doctor
 whitelist-hide status
 whitelist-hide config-path
+whitelist-hide config validate [PATH]
+whitelist-hide config verify [PATH]
+whitelist-hide engine verify <MANIFEST> <BINARY>
 whitelist-hide help
 ```
 
@@ -86,7 +89,7 @@ No code from those projects is copied into this repository unless its license an
 
 ## Safety model
 
-See [SECURITY.md](SECURITY.md) and [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
+See [SECURITY.md](SECURITY.md), [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) and [docs/ARTIFACTS.md](docs/ARTIFACTS.md).
 
 ## License
 

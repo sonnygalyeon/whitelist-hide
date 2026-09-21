@@ -1,0 +1,11 @@
+# Safe bootstrap configuration example.
+# Paths are resolved relative to this file when they are not absolute.
+
+schema = 1
+
+[engine]
+manifest = "engine.example.toml"
+binary = "runtime/engine.bin"
+
+[strategy]
+name = "general-simple-fake"
