@@ -38,7 +38,7 @@ jobs:
 
       - name: Install frontend dependencies
         working-directory: apps/desktop
-        run: npm install
+        run: npm ci
 
       - name: Build privileged helper
         run: cargo build --release --locked -p whitelist-hide-helper
