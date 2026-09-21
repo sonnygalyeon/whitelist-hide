@@ -1,0 +1,15 @@
+# Built-in balanced profile.
+# One domain per line. Subdomains are handled by the engine hostlist matcher.
+youtube.com
+youtu.be
+youtube-nocookie.com
+googlevideo.com
+ytimg.com
+ggpht.com
+googleapis.com
+discord.com
+discord.gg
+discordapp.com
+discordapp.net
+discord.media
+discordcdn.com

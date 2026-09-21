@@ -3,45 +3,68 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="color-scheme" content="dark light" />
     <title>whitelist-hide</title>
   </head>
   <body>
-    <main>
-      <header>
-        <h1>whitelist-hide</h1>
-        <p>Единый Rust lifecycle для CLI и desktop.</p>
+    <main class="app-shell">
+      <header class="topbar">
+        <div class="brand">
+          <div class="brand-mark">W</div>
+          <div>
+            <strong>whitelist-hide</strong>
+            <span id="platform">Desktop</span>
+          </div>
+        </div>
+        <span id="status-pill" class="pill neutral">Проверка</span>
       </header>
 
-      <section>
-        <h2>Сессия</h2>
-        <label>
-          Config
-          <input id="config" type="text" placeholder="/path/to/config.toml" />
-        </label>
-        <label>
-          Strategy
-          <input id="strategy" type="text" placeholder="/path/to/strategy.toml" />
-        </label>
-        <div>
-          <button id="start" type="button">Start</button>
-          <button id="stop" type="button">Stop</button>
-          <button id="health" type="button">Health</button>
+      <section class="hero card">
+        <p class="eyebrow">Встроенный профиль · Balanced</p>
+        <h1 id="hero-title">Проверяем состояние…</h1>
+        <p id="hero-copy" class="muted">
+          Проверяем движок, сетевой backend и встроенный профиль.
+        </p>
+        <button id="toggle" class="primary" type="button" disabled>
+          Подождите…
+        </button>
+        <p id="action-message" class="action-message" aria-live="polite"></p>
+      </section>
+
+      <section class="status-grid">
+        <article class="card metric">
+          <span class="metric-label">Engine</span>
+          <strong id="engine-state">—</strong>
+        </article>
+        <article class="card metric">
+          <span class="metric-label">Packet path</span>
+          <strong id="network-state">—</strong>
+        </article>
+        <article class="card metric">
+          <span class="metric-label">Профиль</span>
+          <strong id="profile-state">Balanced</strong>
+        </article>
+      </section>
+
+      <section class="card details-card">
+        <div class="section-heading">
+          <div>
+            <p class="eyebrow">Диагностика</p>
+            <h2>Состояние системы</h2>
+          </div>
+          <button id="refresh" class="ghost" type="button">Обновить</button>
         </div>
-        <pre id="session-output"></pre>
+        <div id="diagnostics" class="diagnostics"></div>
       </section>
 
-      <section>
-        <button id="refresh" type="button">Обновить диагностику</button>
-        <span id="state">Загрузка…</span>
-      </section>
-
-      <section>
-        <h2>Диагностика</h2>
-        <div id="diagnostics"></div>
-      </section>
+      <details class="card advanced">
+        <summary>Техническая информация</summary>
+        <pre id="technical"></pre>
+      </details>
 
       <footer>
-        <small id="version"></small>
+        <span>whitelist-hide <span id="version"></span></span>
+        <span>Verified runtime · scoped rollback</span>
       </footer>
     </main>
     <script type="module" src="/src/main.js"></script>
