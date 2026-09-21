@@ -144,7 +144,6 @@ pub fn verify_file(
     })
 }
 
-
 pub fn verify_companions(
     manifest: &ArtifactManifest,
     binary_path: &Path,
@@ -227,7 +226,6 @@ fn is_supported_target(target: &str) -> bool {
             | "linux-aarch64"
     )
 }
-
 
 fn validate_artifact_spec(field: &str, spec: &ArtifactSpec) -> Result<(), ArtifactError> {
     if !is_supported_target(&spec.platform) {
