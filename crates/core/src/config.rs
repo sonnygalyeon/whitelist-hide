@@ -85,7 +85,8 @@ impl AppConfig {
         }
 
         for dependency in &self.engine.dependencies {
-            if dependency.manifest.as_os_str().is_empty() || dependency.binary.as_os_str().is_empty()
+            if dependency.manifest.as_os_str().is_empty()
+                || dependency.binary.as_os_str().is_empty()
             {
                 return Err(ConfigError::InvalidConfig(
                     "engine.dependencies manifest/binary paths must not be empty".to_owned(),
