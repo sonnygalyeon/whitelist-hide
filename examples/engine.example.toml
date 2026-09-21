@@ -1,0 +1,13 @@
+# Example only. Replace every field with metadata for the exact artifact
+# you intend to use. The all-zero digest intentionally verifies nothing.
+
+schema = 1
+name = "example-engine"
+version = "0.0.0"
+source = "https://example.invalid/upstream"
+license = "UNKNOWN"
+
+[artifact]
+platform = "macos-aarch64"
+filename = "engine.bin"
+sha256 = "0000000000000000000000000000000000000000000000000000000000000000"
