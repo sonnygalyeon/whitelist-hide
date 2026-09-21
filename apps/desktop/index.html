@@ -9,8 +9,26 @@
     <main>
       <header>
         <h1>whitelist-hide</h1>
-        <p>Единое состояние CLI и desktop backend.</p>
+        <p>Единый Rust lifecycle для CLI и desktop.</p>
       </header>
+
+      <section>
+        <h2>Сессия</h2>
+        <label>
+          Config
+          <input id="config" type="text" placeholder="/path/to/config.toml" />
+        </label>
+        <label>
+          Strategy
+          <input id="strategy" type="text" placeholder="/path/to/strategy.toml" />
+        </label>
+        <div>
+          <button id="start" type="button">Start</button>
+          <button id="stop" type="button">Stop</button>
+          <button id="health" type="button">Health</button>
+        </div>
+        <pre id="session-output"></pre>
+      </section>
 
       <section>
         <button id="refresh" type="button">Обновить диагностику</button>
