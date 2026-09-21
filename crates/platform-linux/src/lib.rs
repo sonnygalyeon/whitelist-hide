@@ -67,7 +67,10 @@ impl PlatformBackend for LinuxBackend {
         let steps = match action {
             BackendAction::Start => vec![
                 step("verify", "Verify the selected userspace engine."),
-                step("queue", "Create only the whitelist-hide nftables table/chains."),
+                step(
+                    "queue",
+                    "Create only the whitelist-hide nftables table/chains.",
+                ),
                 step("engine", "Start the engine and record ownership state."),
                 step("health", "Validate NFQUEUE flow and rollback on failure."),
             ],
