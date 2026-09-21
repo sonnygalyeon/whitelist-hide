@@ -31,8 +31,8 @@ jobs:
       - uses: actions/checkout@v4
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
-      - name: Build CLI
-        run: cargo build --release -p whitelist-hide-cli
+      - name: Build release binaries
+        run: cargo build --locked --release -p whitelist-hide-cli -p whitelist-hide-helper -p whitelist-hide-watchdog
       - name: Package Unix binary
         if: runner.os != 'Windows'
         shell: bash
@@ -42,8 +42,10 @@ jobs:
           set -euo pipefail
           mkdir -p dist
           cp "$BINARY" dist/whitelist-hide
-          chmod 0755 dist/whitelist-hide
-          shasum -a 256 dist/whitelist-hide > dist/SHA256SUMS
+          cp target/release/whitelist-hide-helper dist/whitelist-hide-helper
+          cp target/release/whitelist-hide-watchdog dist/whitelist-hide-watchdog
+          chmod 0755 dist/whitelist-hide dist/whitelist-hide-helper dist/whitelist-hide-watchdog
+          shasum -a 256 dist/whitelist-hide dist/whitelist-hide-helper dist/whitelist-hide-watchdog > dist/SHA256SUMS
       - name: Package Windows binary
         if: runner.os == 'Windows'
         shell: pwsh
@@ -52,8 +54,13 @@ jobs:
         run: |
           New-Item -ItemType Directory -Force dist | Out-Null
           Copy-Item $env:BINARY dist/whitelist-hide.exe
-          $hash = (Get-FileHash dist/whitelist-hide.exe -Algorithm SHA256).Hash.ToLowerInvariant()
-          "$hash  whitelist-hide.exe" | Set-Content -Encoding ascii dist/SHA256SUMS
+          Copy-Item target/release/whitelist-hide-helper.exe dist/whitelist-hide-helper.exe
+          Copy-Item target/release/whitelist-hide-watchdog.exe dist/whitelist-hide-watchdog.exe
+          $lines = foreach ($name in @("whitelist-hide.exe", "whitelist-hide-helper.exe", "whitelist-hide-watchdog.exe")) {
+            $hash = (Get-FileHash "dist/$name" -Algorithm SHA256).Hash.ToLowerInvariant()
+            "$hash  $name"
+          }
+          $lines | Set-Content -Encoding ascii dist/SHA256SUMS
       - name: Upload package
         uses: actions/upload-artifact@v4
         with:
