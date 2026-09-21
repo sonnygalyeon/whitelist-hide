@@ -24,19 +24,10 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
-      - name: Generate dependency lock
-        run: cargo generate-lockfile
       - name: Build locked release CLI
         run: cargo build --release --locked -p whitelist-hide-cli
       - name: Test locked workspace
         run: cargo test --workspace --locked
-      - name: Emit lockfile for release-candidate capture
-        if: runner.os == 'Linux'
-        shell: bash
-        run: |
-          echo WHITELIST_HIDE_LOCK_BEGIN
-          cat Cargo.lock
-          echo WHITELIST_HIDE_LOCK_END
 
   desktop-check:
     strategy:
