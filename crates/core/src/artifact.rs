@@ -20,6 +20,8 @@ pub struct ArtifactManifest {
     pub source: String,
     pub license: String,
     pub artifact: ArtifactSpec,
+    #[serde(default)]
+    pub companions: Vec<ArtifactSpec>,
 }
 
 #[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
@@ -67,18 +69,20 @@ impl ArtifactManifest {
             }
         }
 
-        if !is_supported_target(&self.artifact.platform) {
-            return Err(ArtifactError::InvalidManifest(format!(
-                "unsupported artifact platform: {}",
-                self.artifact.platform
-            )));
+        validate_artifact_spec("artifact", &self.artifact)?;
+        for (index, companion) in self.companions.iter().enumerate() {
+            validate_artifact_spec(&format!("companions[{index}]"), companion)?;
         }
 
-        let digest = self.artifact.sha256.trim();
-        if digest.len() != 64 || !digest.bytes().all(|byte| byte.is_ascii_hexdigit()) {
-            return Err(ArtifactError::InvalidManifest(
-                "artifact.sha256 must contain exactly 64 hexadecimal characters".to_owned(),
-            ));
+        let mut names = std::collections::BTreeSet::new();
+        names.insert(self.artifact.filename.to_ascii_lowercase());
+        for companion in &self.companions {
+            if !names.insert(companion.filename.to_ascii_lowercase()) {
+                return Err(ArtifactError::InvalidManifest(format!(
+                    "duplicate artifact filename: {}",
+                    companion.filename
+                )));
+            }
         }
 
         Ok(())
@@ -140,6 +144,41 @@ pub fn verify_file(
     })
 }
 
+
+pub fn verify_companions(
+    manifest: &ArtifactManifest,
+    binary_path: &Path,
+) -> Result<Vec<VerificationReport>, ArtifactError> {
+    manifest.validate()?;
+    let base = binary_path.parent().unwrap_or_else(|| Path::new("."));
+    let mut reports = Vec::with_capacity(manifest.companions.len());
+
+    for companion in &manifest.companions {
+        let path = base.join(&companion.filename);
+        let file = File::open(&path).map_err(|source| ArtifactError::Io {
+            path: path.clone(),
+            source,
+        })?;
+        let (actual_sha256, size_bytes) =
+            sha256_reader(file).map_err(|source| ArtifactError::Io {
+                path: path.clone(),
+                source,
+            })?;
+
+        reports.push(VerificationReport {
+            name: companion.filename.clone(),
+            version: manifest.version.clone(),
+            expected_sha256: companion.sha256.to_ascii_lowercase(),
+            actual_sha256,
+            size_bytes,
+            expected_platform: companion.platform.clone(),
+            actual_platform: current_artifact_target(),
+        });
+    }
+
+    Ok(reports)
+}
+
 pub fn sha256_reader<R: Read>(mut reader: R) -> io::Result<(String, u64)> {
     let mut hasher = Sha256::new();
     let mut buffer = [0_u8; 64 * 1024];
@@ -187,6 +226,35 @@ fn is_supported_target(target: &str) -> bool {
             | "linux-x86_64"
             | "linux-aarch64"
     )
+}
+
+
+fn validate_artifact_spec(field: &str, spec: &ArtifactSpec) -> Result<(), ArtifactError> {
+    if !is_supported_target(&spec.platform) {
+        return Err(ArtifactError::InvalidManifest(format!(
+            "unsupported {field}.platform: {}",
+            spec.platform
+        )));
+    }
+
+    let filename = Path::new(&spec.filename);
+    let mut components = filename.components();
+    let single = matches!(components.next(), Some(std::path::Component::Normal(_)))
+        && components.next().is_none();
+    if !single {
+        return Err(ArtifactError::InvalidManifest(format!(
+            "{field}.filename must be a plain filename without directories"
+        )));
+    }
+
+    let digest = spec.sha256.trim();
+    if digest.len() != 64 || !digest.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+        return Err(ArtifactError::InvalidManifest(format!(
+            "{field}.sha256 must contain exactly 64 hexadecimal characters"
+        )));
+    }
+
+    Ok(())
 }
 
 #[derive(Debug)]
@@ -237,6 +305,7 @@ mod tests {
                 sha256: "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
                     .to_owned(),
             },
+            companions: Vec::new(),
         }
     }
 
