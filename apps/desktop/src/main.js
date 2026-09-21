@@ -35,7 +35,8 @@ async function runSession(command, payload = {}) {
   sessionOutput.textContent = "Выполнение…";
   try {
     const result = await invoke(command, payload);
-    sessionOutput.textContent = JSON.stringify(result, null, 2);
+    sessionOutput.textContent =
+      typeof result === "string" ? result : JSON.stringify(result, null, 2);
   } catch (error) {
     sessionOutput.textContent = String(error);
   }
