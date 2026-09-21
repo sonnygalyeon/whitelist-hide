@@ -7,11 +7,26 @@ fn main() {
     let command = env::args().nth(1).unwrap_or_else(|| "help".to_owned());
 
     let exit_code = match command.as_str() {
-        "doctor" => { doctor(); 0 }
-        "status" => { status(); 0 }
-        "config-path" => { println!("{}", config_path().display()); 0 }
-        "help" | "--help" | "-h" => { help(); 0 }
-        "version" | "--version" | "-V" => { println!("whitelist-hide {}", env!("CARGO_PKG_VERSION")); 0 }
+        "doctor" => {
+            doctor();
+            0
+        }
+        "status" => {
+            status();
+            0
+        }
+        "config-path" => {
+            println!("{}", config_path().display());
+            0
+        }
+        "help" | "--help" | "-h" => {
+            help();
+            0
+        }
+        "version" | "--version" | "-V" => {
+            println!("whitelist-hide {}", env!("CARGO_PKG_VERSION"));
+            0
+        }
         unknown => {
             eprintln!("unknown command: {unknown}\n");
             help();
@@ -32,7 +47,9 @@ fn doctor() {
     println!("network changes: disabled (safe bootstrap stage)");
 
     match report.platform {
-        Platform::Windows => println!("next backend milestone: driver provenance + WinDivert adapter"),
+        Platform::Windows => {
+            println!("next backend milestone: driver provenance + WinDivert adapter")
+        }
         Platform::MacOS => println!("next backend milestone: reversible pf anchor + utun adapter"),
         Platform::Linux => println!("next backend milestone: reversible nftables/NFQUEUE adapter"),
         Platform::Unsupported => println!("backend: unsupported platform"),
@@ -61,7 +78,11 @@ fn config_path() -> PathBuf {
             .join("config.toml"),
         Platform::Linux => env::var_os("XDG_CONFIG_HOME")
             .map(PathBuf::from)
-            .or_else(|| env::var_os("HOME").map(PathBuf::from).map(|home| home.join(".config")))
+            .or_else(|| {
+                env::var_os("HOME")
+                    .map(PathBuf::from)
+                    .map(|home| home.join(".config"))
+            })
             .unwrap_or_else(|| PathBuf::from("."))
             .join("whitelist-hide")
             .join("config.toml"),
