@@ -98,9 +98,9 @@ fn resolve(base: &Path, path: &Path) -> PathBuf {
 
 fn is_safe_identifier(value: &str) -> bool {
     !value.is_empty()
-        && value.bytes().all(|byte| {
-            byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.')
-        })
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.'))
 }
 
 #[derive(Debug)]
