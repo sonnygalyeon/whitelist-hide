@@ -298,7 +298,6 @@ fn print_action_plan(plan: &ActionPlan) {
     }
 }
 
-
 fn strategy_validate(path: &Path) -> i32 {
     match StrategyDefinition::load(path) {
         Ok(strategy) => {
