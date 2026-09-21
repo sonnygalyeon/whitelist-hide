@@ -86,3 +86,15 @@ See `SECURITY.md`, `docs/ARCHITECTURE.md`, `docs/ARTIFACTS.md` and `docs/GUI.md`
 ## License
 
 Project licensing will be finalized before the first public release. Third-party components keep their own licenses.
+
+
+## Verified engine lifecycle
+
+The runtime can launch an engine only after its manifest, filename, SHA-256 and target platform are verified.
+
+```text
+whitelist-hide engine launch <MANIFEST> <BINARY> [ARGS...]
+whitelist-hide engine stop
+```
+
+The canonical executable path and owned PID are written to the runtime journal. Stop refuses to terminate a PID if the current process identity no longer matches the executable recorded by whitelist-hide.
