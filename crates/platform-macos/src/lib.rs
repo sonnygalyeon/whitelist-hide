@@ -1,15 +1,282 @@
 use std::error::Error;
 use std::fmt;
-use std::io;
-use std::process::Command;
+use std::io::{self, Write};
+use std::process::{Command, Stdio};
 
 use whitelist_hide_core::Platform;
+use whitelist_hide_core::strategy::PortRange;
 use whitelist_hide_service::{
     ActionPlan, ActionResult, ActionStep, BackendAction, BackendState, BackendStatus,
     DiagnosticItem, DiagnosticLevel, PlatformBackend,
 };
 
 pub const PF_ANCHOR: &str = "com.whitelisthide";
+
+pub const UTUN_INTERFACE: &str = "utun50";
+pub const UTUN_LOCAL: &str = "10.77.0.1";
+pub const UTUN_PEER: &str = "10.77.0.2";
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MacNetworkSnapshot {
+    pub interface: String,
+    pub gateway: String,
+    pub gateway_mac: String,
+    pub pf_was_enabled: bool,
+}
+
+pub fn inspect_network_snapshot() -> Result<MacNetworkSnapshot, MacOsError> {
+    if Platform::detect() != Platform::MacOS {
+        return Err(MacOsError::ActionUnavailable(
+            "macOS network snapshot can only be collected on macOS".to_owned(),
+        ));
+    }
+
+    let route = Command::new("/sbin/route")
+        .args(["-n", "get", "default"])
+        .output()
+        .map_err(|source| MacOsError::CommandIo {
+            program: "/sbin/route".to_owned(),
+            source,
+        })?;
+    if !route.status.success() {
+        return Err(MacOsError::ActionUnavailable(
+            "cannot determine macOS default route".to_owned(),
+        ));
+    }
+    let route_text = String::from_utf8_lossy(&route.stdout);
+    let interface = route_value(&route_text, "interface:")
+        .ok_or_else(|| MacOsError::ActionUnavailable("default interface missing".to_owned()))?;
+    let gateway = route_value(&route_text, "gateway:")
+        .ok_or_else(|| MacOsError::ActionUnavailable("default gateway missing".to_owned()))?;
+
+    let _ = Command::new("/sbin/ping")
+        .args(["-c", "1", "-t", "1", &gateway])
+        .output();
+
+    let arp = Command::new("/usr/sbin/arp")
+        .args(["-n", &gateway])
+        .output()
+        .map_err(|source| MacOsError::CommandIo {
+            program: "/usr/sbin/arp".to_owned(),
+            source,
+        })?;
+    let arp_text = String::from_utf8_lossy(&arp.stdout);
+    let gateway_mac = parse_gateway_mac(&arp_text)
+        .ok_or_else(|| MacOsError::ActionUnavailable("gateway MAC unavailable".to_owned()))?;
+
+    let pf = Command::new("/sbin/pfctl")
+        .args(["-s", "info"])
+        .output()
+        .map_err(|source| MacOsError::CommandIo {
+            program: "/sbin/pfctl".to_owned(),
+            source,
+        })?;
+    let pf_text = String::from_utf8_lossy(&pf.stdout);
+    let pf_was_enabled = parse_pf_status(&pf_text)
+        .is_some_and(|status| status.starts_with("Enabled"));
+
+    Ok(MacNetworkSnapshot {
+        interface,
+        gateway,
+        gateway_mac,
+        pf_was_enabled,
+    })
+}
+
+pub fn wait_for_owned_utun(attempts: u32) -> Result<(), MacOsError> {
+    for _ in 0..attempts {
+        if Command::new("/sbin/ifconfig")
+            .arg(UTUN_INTERFACE)
+            .output()
+            .is_ok_and(|output| output.status.success())
+        {
+            return Ok(());
+        }
+        std::thread::sleep(std::time::Duration::from_millis(100));
+    }
+    Err(MacOsError::ActionUnavailable(format!(
+        "{UTUN_INTERFACE} did not appear"
+    )))
+}
+
+pub fn configure_owned_utun() -> Result<(), MacOsError> {
+    run_checked(
+        "/sbin/ifconfig",
+        &[
+            UTUN_INTERFACE,
+            UTUN_LOCAL,
+            UTUN_PEER,
+            "netmask",
+            "255.255.255.255",
+            "up",
+        ],
+    )
+}
+
+pub fn enable_pf_if_needed(was_enabled: bool) -> Result<Option<String>, MacOsError> {
+    if was_enabled {
+        return Ok(None);
+    }
+
+    let output = Command::new("/sbin/pfctl")
+        .arg("-E")
+        .output()
+        .map_err(|source| MacOsError::CommandIo {
+            program: "/sbin/pfctl".to_owned(),
+            source,
+        })?;
+    if !output.status.success() {
+        return Err(MacOsError::CommandFailed {
+            program: "/sbin/pfctl".to_owned(),
+            args: vec!["-E".to_owned()],
+            code: output.status.code(),
+            stderr: String::from_utf8_lossy(&output.stderr).trim().to_owned(),
+        });
+    }
+
+    let combined = format!(
+        "{}\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    Ok(parse_pf_token(&combined))
+}
+
+pub fn release_pf_token(token: &str) -> Result<(), MacOsError> {
+    if token.is_empty() || !token.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+        return Err(MacOsError::ActionUnavailable(
+            "invalid pf enable token".to_owned(),
+        ));
+    }
+    run_checked("/sbin/pfctl", &["-X", token])
+}
+
+pub fn install_pf_routes(
+    tcp_ports: &[PortRange],
+    udp_ports: &[PortRange],
+) -> Result<(), MacOsError> {
+    let rules = pf_rules(tcp_ports, udp_ports);
+    let mut child = Command::new("/sbin/pfctl")
+        .args(["-a", PF_ANCHOR, "-f", "-"])
+        .stdin(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|source| MacOsError::CommandIo {
+            program: "/sbin/pfctl".to_owned(),
+            source,
+        })?;
+
+    child
+        .stdin
+        .as_mut()
+        .ok_or_else(|| MacOsError::ActionUnavailable("pfctl stdin unavailable".to_owned()))?
+        .write_all(rules.as_bytes())
+        .map_err(|source| MacOsError::CommandIo {
+            program: "/sbin/pfctl".to_owned(),
+            source,
+        })?;
+
+    let output = child.wait_with_output().map_err(|source| MacOsError::CommandIo {
+        program: "/sbin/pfctl".to_owned(),
+        source,
+    })?;
+
+    if output.status.success() {
+        Ok(())
+    } else {
+        Err(MacOsError::CommandFailed {
+            program: "/sbin/pfctl".to_owned(),
+            args: vec!["-a".to_owned(), PF_ANCHOR.to_owned(), "-f".to_owned(), "-".to_owned()],
+            code: output.status.code(),
+            stderr: String::from_utf8_lossy(&output.stderr).trim().to_owned(),
+        })
+    }
+}
+
+pub fn clear_owned_pf_anchor() -> Result<(), MacOsError> {
+    run_checked("/sbin/pfctl", &["-a", PF_ANCHOR, "-F", "all"])
+}
+
+fn run_checked(program: &str, args: &[&str]) -> Result<(), MacOsError> {
+    let output = Command::new(program)
+        .args(args)
+        .output()
+        .map_err(|source| MacOsError::CommandIo {
+            program: program.to_owned(),
+            source,
+        })?;
+    if output.status.success() {
+        Ok(())
+    } else {
+        Err(MacOsError::CommandFailed {
+            program: program.to_owned(),
+            args: args.iter().map(|value| (*value).to_owned()).collect(),
+            code: output.status.code(),
+            stderr: String::from_utf8_lossy(&output.stderr).trim().to_owned(),
+        })
+    }
+}
+
+fn pf_rules(tcp_ports: &[PortRange], udp_ports: &[PortRange]) -> String {
+    let mut rules = String::new();
+    if !tcp_ports.is_empty() {
+        rules.push_str(&format!(
+            "pass out quick route-to ({UTUN_INTERFACE} {UTUN_PEER}) inet proto tcp from any to any port {{ {} }} user {{ >root }} no state\n",
+            pf_ports(tcp_ports)
+        ));
+    }
+    if !udp_ports.is_empty() {
+        rules.push_str(&format!(
+            "pass out quick route-to ({UTUN_INTERFACE} {UTUN_PEER}) inet proto udp from any to any port {{ {} }} user {{ >root }} no state\n",
+            pf_ports(udp_ports)
+        ));
+    }
+    rules
+}
+
+fn pf_ports(ranges: &[PortRange]) -> String {
+    ranges
+        .iter()
+        .map(|range| {
+            if range.start == range.end {
+                range.start.to_string()
+            } else {
+                format!("{}:{}", range.start, range.end)
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(",")
+}
+
+fn parse_gateway_mac(text: &str) -> Option<String> {
+    let fields = text.split_whitespace().collect::<Vec<_>>();
+    fields.windows(2).find_map(|pair| {
+        if pair[0] == "at" && pair[1].matches(':').count() == 5 {
+            Some(pair[1].to_owned())
+        } else {
+            None
+        }
+    })
+}
+
+fn parse_pf_token(text: &str) -> Option<String> {
+    text.lines().find_map(|line| {
+        let mut parts = line.split_whitespace();
+        while let Some(part) = parts.next() {
+            if part == "Token" {
+                let next = parts.next()?;
+                if next == ":" {
+                    return parts.next().map(str::to_owned);
+                }
+                if let Some(value) = next.strip_prefix(':') {
+                    return (!value.is_empty()).then(|| value.to_owned());
+                }
+            }
+        }
+        None
+    })
+}
+
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CommandOutput {
@@ -506,6 +773,25 @@ mod tests {
         assert_eq!(
             parse_utun_interfaces("lo0 gif0 en0 utun0 utun4 bridge0"),
             vec!["utun0".to_owned(), "utun4".to_owned()]
+        );
+    }
+
+    #[test]
+    fn pf_plan_is_scoped_to_owned_utun() {
+        let rules = pf_rules(
+            &[PortRange { start: 80, end: 80 }, PortRange { start: 443, end: 443 }],
+            &[PortRange { start: 443, end: 443 }],
+        );
+        assert!(rules.contains("route-to (utun50 10.77.0.2)"));
+        assert!(rules.contains("proto tcp"));
+        assert!(rules.contains("proto udp"));
+    }
+
+    #[test]
+    fn parses_enable_token() {
+        assert_eq!(
+            parse_pf_token("pf enabled\nToken : 0123abcd\n"),
+            Some("0123abcd".to_owned())
         );
     }
 
