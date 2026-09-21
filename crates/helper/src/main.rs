@@ -1,11 +1,11 @@
 use whitelist_hide_controller::{
-    default_config_path, start, status, stop,
+    start, status, stop, system_config_path,
 };
 
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let code = match args.as_slice() {
-        [command] if command == "start" => match start(&default_config_path()) {
+        [command] if command == "start" => match start(&system_config_path()) {
             Ok(report) => {
                 println!(
                     "started platform={} strategy={} pid={}",
