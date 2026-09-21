@@ -1,0 +1,62 @@
+name: release-cli
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            artifact: whitelist-hide-linux-x86_64
+            binary: target/release/whitelist-hide
+          - os: macos-latest
+            artifact: whitelist-hide-macos
+            binary: target/release/whitelist-hide
+          - os: windows-latest
+            artifact: whitelist-hide-windows-x86_64
+            binary: target/release/whitelist-hide.exe
+
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+      - name: Build CLI
+        run: cargo build --release -p whitelist-hide-cli
+      - name: Package Unix binary
+        if: runner.os != 'Windows'
+        shell: bash
+        env:
+          BINARY: ${{ matrix.binary }}
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          cp "$BINARY" dist/whitelist-hide
+          chmod 0755 dist/whitelist-hide
+          shasum -a 256 dist/whitelist-hide > dist/SHA256SUMS
+      - name: Package Windows binary
+        if: runner.os == 'Windows'
+        shell: pwsh
+        env:
+          BINARY: ${{ matrix.binary }}
+        run: |
+          New-Item -ItemType Directory -Force dist | Out-Null
+          Copy-Item $env:BINARY dist/whitelist-hide.exe
+          $hash = (Get-FileHash dist/whitelist-hide.exe -Algorithm SHA256).Hash.ToLowerInvariant()
+          "$hash  whitelist-hide.exe" | Set-Content -Encoding ascii dist/SHA256SUMS
+      - name: Upload package
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}
+          path: dist/
+          if-no-files-found: error
