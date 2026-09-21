@@ -1,0 +1,51 @@
+name: generate-locks
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - ".github/workflows/generate-locks.yml"
+
+permissions:
+  contents: write
+
+jobs:
+  locks:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: feature/v1-finalization
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install Node
+        uses: actions/setup-node@v6
+        with:
+          node-version: "24"
+
+      - name: Generate Rust lockfiles
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo generate-lockfile
+          cargo generate-lockfile --manifest-path apps/desktop/src-tauri/Cargo.toml
+
+      - name: Generate npm lockfile
+        working-directory: apps/desktop
+        run: npm install --package-lock-only --ignore-scripts
+
+      - name: Commit lockfiles
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add Cargo.lock apps/desktop/package-lock.json apps/desktop/src-tauri/Cargo.lock
+          if git diff --cached --quiet; then
+            echo "Lockfiles already current"
+            exit 0
+          fi
+          git commit -m "chore: lock release dependencies"
+          git push origin HEAD:feature/v1-finalization
