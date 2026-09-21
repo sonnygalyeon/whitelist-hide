@@ -26,8 +26,14 @@ pub struct RuntimeState {
     pub phase: RuntimePhase,
     pub controller_pid: u32,
     pub engine_pid: Option<u32>,
+    #[serde(default)]
+    pub engine_binary: Option<PathBuf>,
     pub owned_interface: Option<String>,
+    #[serde(default)]
+    pub utun_unit: Option<u32>,
     pub owned_firewall_scope: Option<String>,
+    #[serde(default)]
+    pub pf_enable_token: Option<String>,
     pub previous_tcp_keepinit: Option<u32>,
 }
 
@@ -40,8 +46,11 @@ impl RuntimeState {
             phase: RuntimePhase::Starting,
             controller_pid: std::process::id(),
             engine_pid: None,
+            engine_binary: None,
             owned_interface: None,
+            utun_unit: None,
             owned_firewall_scope: None,
+            pf_enable_token: None,
             previous_tcp_keepinit: None,
         }
     }
@@ -75,9 +84,25 @@ impl RuntimeState {
         }
 
         if let Some(scope) = &self.owned_firewall_scope {
-            if !safe_token(scope) {
+            if !safe_firewall_scope(scope) {
                 return Err(RuntimeStateError::InvalidState(
                     "owned_firewall_scope contains unsupported characters".to_owned(),
+                ));
+            }
+        }
+
+        if let Some(token) = &self.pf_enable_token {
+            if !safe_token(token) {
+                return Err(RuntimeStateError::InvalidState(
+                    "pf_enable_token contains unsupported characters".to_owned(),
+                ));
+            }
+        }
+
+        if let Some(unit) = self.utun_unit {
+            if !(1..=1024).contains(&unit) {
+                return Err(RuntimeStateError::InvalidState(
+                    "utun_unit must be within 1..=1024".to_owned(),
                 ));
             }
         }
@@ -138,6 +163,7 @@ impl StateStore {
             source,
         })?;
 
+        #[cfg(windows)]
         if self.path.exists() {
             fs::remove_file(&self.path).map_err(|source| RuntimeStateError::Io {
                 path: self.path.clone(),
@@ -177,6 +203,13 @@ fn safe_token(value: &str) -> bool {
         && value
             .bytes()
             .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.' | b':'))
+}
+
+fn safe_firewall_scope(value: &str) -> bool {
+    !value.is_empty()
+        && value.bytes().all(|byte| {
+            byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.' | b':' | b'/')
+        })
 }
 
 #[derive(Debug)]
@@ -237,8 +270,11 @@ mod tests {
         let mut state = RuntimeState::new("session-1", "macos");
         state.phase = RuntimePhase::Running;
         state.engine_pid = Some(4242);
-        state.owned_interface = Some("utun51".to_owned());
-        state.owned_firewall_scope = Some("com.whitelisthide".to_owned());
+        state.engine_binary = Some(PathBuf::from("/opt/whitelist-hide/utunws"));
+        state.owned_interface = Some("utun200".to_owned());
+        state.utun_unit = Some(201);
+        state.owned_firewall_scope = Some("com.apple/whitelist-hide".to_owned());
+        state.pf_enable_token = Some("abc123".to_owned());
 
         store.save(&state).expect("state should save");
         let loaded = store
@@ -255,5 +291,12 @@ mod tests {
         let mut state = RuntimeState::new("session-1", "macos");
         state.owned_interface = Some("utun0;rm".to_owned());
         assert!(state.validate().is_err());
+    }
+
+    #[test]
+    fn accepts_scoped_pf_anchor() {
+        let mut state = RuntimeState::new("session-1", "macos");
+        state.owned_firewall_scope = Some("com.apple/whitelist-hide".to_owned());
+        assert!(state.validate().is_ok());
     }
 }

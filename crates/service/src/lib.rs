@@ -1,4 +1,5 @@
 use std::error::Error;
+use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
 use whitelist_hide_core::Platform;
@@ -71,6 +72,18 @@ pub struct ActionResult {
     pub message: String,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct StartRequest {
+    pub config_path: PathBuf,
+    pub strategy_path: PathBuf,
+    pub state_path: PathBuf,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct StopRequest {
+    pub state_path: PathBuf,
+}
+
 pub trait PlatformBackend {
     type Error: Error;
 
@@ -78,6 +91,11 @@ pub trait PlatformBackend {
     fn status(&self) -> Result<BackendStatus, Self::Error>;
     fn plan(&self, action: BackendAction) -> Result<ActionPlan, Self::Error>;
     fn execute(&self, action: BackendAction) -> Result<ActionResult, Self::Error>;
+}
+
+pub trait ManagedPlatformBackend: PlatformBackend {
+    fn start_managed(&self, request: &StartRequest) -> Result<ActionResult, Self::Error>;
+    fn stop_managed(&self, request: &StopRequest) -> Result<ActionResult, Self::Error>;
 }
 
 pub struct AppService<B> {
@@ -108,6 +126,19 @@ where
 
     pub fn execute(&self, action: BackendAction) -> Result<ActionResult, B::Error> {
         self.backend.execute(action)
+    }
+}
+
+impl<B> AppService<B>
+where
+    B: ManagedPlatformBackend,
+{
+    pub fn start(&self, request: &StartRequest) -> Result<ActionResult, B::Error> {
+        self.backend.start_managed(request)
+    }
+
+    pub fn stop(&self, request: &StopRequest) -> Result<ActionResult, B::Error> {
+        self.backend.stop_managed(request)
     }
 }
 
