@@ -133,3 +133,110 @@ jobs:
           name: source-built-linux-nfqws
           path: dist/linux/
           if-no-files-found: error
+
+  windows-winws:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Read pinned Windows upstream
+        id: upstream
+        shell: pwsh
+        run: python scripts/upstream_lock.py windows --github-output "$env:GITHUB_OUTPUT"
+
+      - name: Install Cygwin build environment
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          Invoke-WebRequest -Uri "https://cygwin.com/setup-x86_64.exe" -OutFile setup-x86_64.exe
+          Start-Process -FilePath ".\setup-x86_64.exe" -ArgumentList @(
+            "-q", "-N", "-R", "C:\cygwin64",
+            "-s", "https://mirrors.kernel.org/sourceware/cygwin/",
+            "-P", "make,gcc-core,zlib-devel"
+          ) -Wait -NoNewWindow
+          if (!(Test-Path "C:\cygwin64\bin\bash.exe")) { throw "Cygwin installation failed" }
+
+      - name: Fetch exact zapret commit
+        shell: pwsh
+        env:
+          REPOSITORY: ${{ steps.upstream.outputs.repository }}
+          COMMIT: ${{ steps.upstream.outputs.commit }}
+          LICENSE_PATH: ${{ steps.upstream.outputs.license_path }}
+        run: |
+          $ErrorActionPreference = "Stop"
+          git init upstream
+          git -C upstream remote add origin "$env:REPOSITORY"
+          git -C upstream fetch --depth 1 origin "$env:COMMIT"
+          if ((git -C upstream rev-parse FETCH_HEAD).Trim() -ne $env:COMMIT) { throw "commit mismatch" }
+          git -C upstream checkout --detach "$env:COMMIT"
+          if (!(Test-Path (Join-Path "upstream" $env:LICENSE_PATH))) { throw "upstream license missing" }
+
+      - name: Download and verify official WinDivert runtime
+        shell: pwsh
+        env:
+          URL: ${{ steps.upstream.outputs.windivert_url }}
+          ARCHIVE_SHA256: ${{ steps.upstream.outputs.windivert_archive_sha256 }}
+          DLL_SHA256: ${{ steps.upstream.outputs.windivert_dll_sha256 }}
+          SYS_SHA256: ${{ steps.upstream.outputs.windivert_sys_sha256 }}
+        run: |
+          $ErrorActionPreference = "Stop"
+          Invoke-WebRequest -Uri "$env:URL" -OutFile WinDivert.zip
+          $archiveHash = (Get-FileHash WinDivert.zip -Algorithm SHA256).Hash.ToLowerInvariant()
+          if ($archiveHash -ne $env:ARCHIVE_SHA256.ToLowerInvariant()) {
+            throw "WinDivert archive checksum mismatch: $archiveHash"
+          }
+          Expand-Archive WinDivert.zip -DestinationPath windivert
+          $root = Get-ChildItem windivert -Directory | Select-Object -First 1
+          $dll = Join-Path $root.FullName "x64\WinDivert.dll"
+          $sys = Join-Path $root.FullName "x64\WinDivert64.sys"
+          if ((Get-FileHash $dll -Algorithm SHA256).Hash.ToLowerInvariant() -ne $env:DLL_SHA256.ToLowerInvariant()) {
+            throw "WinDivert.dll checksum mismatch"
+          }
+          if ((Get-FileHash $sys -Algorithm SHA256).Hash.ToLowerInvariant() -ne $env:SYS_SHA256.ToLowerInvariant()) {
+            throw "WinDivert64.sys checksum mismatch"
+          }
+
+      - name: Build winws from exact source
+        shell: pwsh
+        env:
+          COMMIT: ${{ steps.upstream.outputs.commit }}
+          LICENSE_NAME: ${{ steps.upstream.outputs.license }}
+        run: |
+          $ErrorActionPreference = "Stop"
+          $cygWorkspace = (& "C:\cygwin64\bin\cygpath.exe" -u "$env:GITHUB_WORKSPACE").Trim()
+          & "C:\cygwin64\bin\bash.exe" -lc "cd '$cygWorkspace/upstream/nfq' && make cygwin64"
+          if ($LASTEXITCODE -ne 0) { throw "winws source build failed" }
+          if (!(Test-Path "upstream\nfq\winws.exe")) { throw "winws.exe missing after build" }
+
+          New-Item -ItemType Directory -Force dist/windows | Out-Null
+          Copy-Item upstream\nfq\winws.exe dist/windows/winws.exe
+          Copy-Item C:\cygwin64\bin\cygwin1.dll dist/windows/cygwin1.dll
+
+          $root = Get-ChildItem windivert -Directory | Select-Object -First 1
+          Copy-Item (Join-Path $root.FullName "x64\WinDivert.dll") dist/windows/WinDivert.dll
+          Copy-Item (Join-Path $root.FullName "x64\WinDivert64.sys") dist/windows/WinDivert64.sys
+          Copy-Item (Join-Path $root.FullName "LICENSE") dist/windows/LICENSE-WINDIVERT.txt
+          Copy-Item (Join-Path "upstream" "${{ steps.upstream.outputs.license_path }}") dist/windows/LICENSE-ZAPRET.txt
+
+          $files = @("winws.exe", "cygwin1.dll", "WinDivert.dll", "WinDivert64.sys")
+          $sumLines = foreach ($name in $files) {
+            $hash = (Get-FileHash "dist/windows/$name" -Algorithm SHA256).Hash.ToLowerInvariant()
+            "$hash  $name"
+          }
+          $sumLines | Set-Content -Encoding ascii dist/windows/SHA256SUMS
+          $sumLines | ForEach-Object { Write-Host "WHITELIST_HIDE_HASH $_" }
+
+          @(
+            "source_commit=$env:COMMIT",
+            "source_license=$env:LICENSE_NAME",
+            "windivert_version=${{ steps.upstream.outputs.windivert_version }}",
+            "windivert_archive_sha256=${{ steps.upstream.outputs.windivert_archive_sha256 }}",
+            "builder=github-actions/windows-latest"
+          ) | Set-Content -Encoding ascii dist/windows/PROVENANCE.txt
+
+      - name: Upload source-built Windows bundle
+        uses: actions/upload-artifact@v4
+        with:
+          name: source-built-windows-winws
+          path: dist/windows/
+          if-no-files-found: error
