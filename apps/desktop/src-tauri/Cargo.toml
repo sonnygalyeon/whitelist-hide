@@ -14,7 +14,6 @@ tauri-build = { version = "2", features = [] }
 [dependencies]
 tauri = { version = "2", features = [] }
 whitelist-hide-core = { path = "../../../crates/core" }
-whitelist-hide-controller = { path = "../../../crates/controller" }
 whitelist-hide-service = { path = "../../../crates/service" }
 whitelist-hide-macos = { path = "../../../crates/platform-macos" }
 whitelist-hide-windows = { path = "../../../crates/platform-windows" }
