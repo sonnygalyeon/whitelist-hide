@@ -5,6 +5,7 @@
 pub mod artifact;
 pub mod config;
 pub mod strategy;
+pub mod strategy_compiler;
 
 use std::fmt;
 
