@@ -358,7 +358,6 @@ pub fn launch_verified_engine_with_env(
     })
 }
 
-
 pub fn recorded_engine_alive(state: &RuntimeState) -> Result<bool, EngineRuntimeError> {
     let Some(pid) = state.engine_pid else {
         return Ok(false);
