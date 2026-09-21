@@ -33,6 +33,8 @@ pub struct RuntimeState {
     pub engine_pid: Option<u32>,
     #[serde(default)]
     pub engine_binary: Option<PathBuf>,
+    #[serde(default)]
+    pub strategy_id: Option<String>,
     pub owned_interface: Option<String>,
     pub owned_firewall_scope: Option<String>,
     #[serde(default)]
@@ -50,6 +52,7 @@ impl RuntimeState {
             controller_pid: std::process::id(),
             engine_pid: None,
             engine_binary: None,
+            strategy_id: None,
             owned_interface: None,
             owned_firewall_scope: None,
             pf_token: None,
@@ -81,6 +84,22 @@ impl RuntimeState {
             if !binary.is_absolute() {
                 return Err(RuntimeStateError::InvalidState(
                     "engine_binary must be an absolute path".to_owned(),
+                ));
+            }
+        }
+
+        if let Some(strategy_id) = &self.strategy_id {
+            if !safe_token(strategy_id) {
+                return Err(RuntimeStateError::InvalidState(
+                    "strategy_id contains unsupported characters".to_owned(),
+                ));
+            }
+        }
+
+        if let Some(token) = &self.pf_token {
+            if !safe_token(token) {
+                return Err(RuntimeStateError::InvalidState(
+                    "pf_token contains unsupported characters".to_owned(),
                 ));
             }
         }
@@ -645,6 +664,7 @@ mod tests {
                 .canonicalize()
                 .expect("canonical current executable"),
         );
+        state.strategy_id = Some("general".to_owned());
         state.owned_interface = Some("utun51".to_owned());
         state.owned_firewall_scope = Some("com.whitelisthide".to_owned());
 
