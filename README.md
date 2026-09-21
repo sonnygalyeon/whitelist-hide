@@ -2,7 +2,7 @@
 
 Cross-platform, auditable network filtering / DPI-evasion toolkit.
 
-> Status: early development. The project now has a shared application service layer plus a macOS inspection/planning backend. Full packet interception is not enabled yet.
+> Status: active development. macOS now has a verified managed engine lifecycle with owned utun/PF state and rollback. Windows and Linux still have diagnostic/planning backends while their managed packet paths are being implemented.
 
 ## Goals
 
@@ -25,13 +25,17 @@ whitelist-hide config validate [PATH]
 whitelist-hide config verify [PATH]
 whitelist-hide engine verify <MANIFEST> <BINARY>
 
-whitelist-hide backend macos inspect
-whitelist-hide backend macos plan <start|stop|cleanup>
-whitelist-hide backend macos cleanup
+whitelist-hide strategy validate <PATH>
+
+whitelist-hide backend <macos|windows|linux> inspect
+whitelist-hide backend <macos|windows|linux> plan <start|stop|cleanup>
+
+whitelist-hide backend macos start <CONFIG> <STRATEGY> --apply
+whitelist-hide backend macos stop --apply
 whitelist-hide backend macos cleanup --apply
 ```
 
-The macOS cleanup apply command is deliberately narrow: it only flushes the dedicated `com.whitelisthide` pf anchor. It does not disable or reset global pf state.
+The macOS backend uses the dedicated `com.apple/whitelist-hide` PF anchor. Managed start verifies the configured engine SHA-256/platform, records the owned PID/utun/PF token, and rolls back owned resources on startup failure. Cleanup never disables or globally flushes PF.
 
 ## Planned application architecture
 
@@ -81,7 +85,7 @@ No code from those projects is copied into this repository unless its license an
 
 ## Safety model
 
-See `SECURITY.md`, `docs/ARCHITECTURE.md`, `docs/ARTIFACTS.md` and `docs/GUI.md`.
+See `SECURITY.md`, `docs/ARCHITECTURE.md`, `docs/ARTIFACTS.md`, `docs/MACOS.md`, `docs/UPSTREAM.md`, `docs/STRATEGIES.md` and `docs/GUI.md`.
 
 ## License
 
