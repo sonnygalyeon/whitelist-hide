@@ -241,7 +241,9 @@ fn start_macos(
     let mut state = store
         .load()
         .map_err(|error| SessionError::Runtime(error.to_string()))?
-        .ok_or_else(|| SessionError::Runtime("runtime state disappeared after launch".to_owned()))?;
+        .ok_or_else(|| {
+            SessionError::Runtime("runtime state disappeared after launch".to_owned())
+        })?;
     state.owned_interface = Some(MACOS_UTUN.to_owned());
     state.owned_firewall_scope = Some(MACOS_ANCHOR.to_owned());
     state.backend_token = pf_token;
@@ -281,7 +283,9 @@ fn start_windows(
     let mut state = store
         .load()
         .map_err(|error| SessionError::Runtime(error.to_string()))?
-        .ok_or_else(|| SessionError::Runtime("runtime state disappeared after launch".to_owned()))?;
+        .ok_or_else(|| {
+            SessionError::Runtime("runtime state disappeared after launch".to_owned())
+        })?;
     state.owned_firewall_scope = Some("windivert:engine-owned".to_owned());
     state.phase = RuntimePhase::Running;
     store
