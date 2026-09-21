@@ -26,7 +26,7 @@ impl EngineFlavor {
         match self {
             Self::Nfqws => "nfqws",
             Self::Utunws => "utunws",
-            Self::Winws => "winws",
+            Self::Winws => "winws2",
         }
     }
 }
@@ -54,32 +54,200 @@ pub fn compile_strategy(
         .map_err(|error| CompileError::InvalidStrategy(error.to_string()))?;
 
     let base = strategy_path.parent().unwrap_or_else(|| Path::new("."));
-    let common = compile_common_args(strategy, base)?;
-    let mut args = Vec::new();
+    let args = match engine {
+        EngineFlavor::Winws => compile_winws2(strategy, base)?,
+        EngineFlavor::Nfqws | EngineFlavor::Utunws => compile_v1(strategy, base)?,
+    };
 
+    Ok(CompiledStrategy { engine, args })
+}
+
+fn compile_v1(strategy: &StrategyDefinition, base: &Path) -> Result<Vec<String>, CompileError> {
+    let common = compile_list_args(strategy, base)?;
+    let mut desync = Vec::new();
+    compile_v1_desync(&strategy.desync, &mut desync);
+
+    let mut args = Vec::new();
     if !strategy.filters.tcp_ports.is_empty() {
         args.push(format!(
             "--filter-tcp={}",
             format_port_ranges(&strategy.filters.tcp_ports)
         ));
         args.extend(common.iter().cloned());
+        args.extend(desync.iter().cloned());
     }
 
     if !strategy.filters.udp_ports.is_empty() {
-        if !args.is_empty() {
-            args.push("--new".to_owned());
-        }
+        push_new_if_needed(&mut args);
         args.push(format!(
             "--filter-udp={}",
             format_port_ranges(&strategy.filters.udp_ports)
         ));
         args.extend(common);
+        args.extend(desync);
     }
 
-    Ok(CompiledStrategy { engine, args })
+    Ok(args)
 }
 
-fn compile_common_args(
+fn compile_winws2(
+    strategy: &StrategyDefinition,
+    base: &Path,
+) -> Result<Vec<String>, CompileError> {
+    let mut args = Vec::new();
+
+    if !strategy.filters.tcp_ports.is_empty() {
+        args.push(format!(
+            "--wf-tcp-out={}",
+            format_port_ranges(&strategy.filters.tcp_ports)
+        ));
+    }
+    if !strategy.filters.udp_ports.is_empty() {
+        args.push(format!(
+            "--wf-udp-out={}",
+            format_port_ranges(&strategy.filters.udp_ports)
+        ));
+    }
+
+    args.push("--lua-init=@zapret-lib.lua".to_owned());
+    args.push("--lua-init=@zapret-antidpi.lua".to_owned());
+
+    let common = compile_list_args(strategy, base)?;
+
+    if contains_port(&strategy.filters.tcp_ports, 80) {
+        push_winws2_profile(
+            &mut args,
+            "--filter-tcp=80".to_owned(),
+            Some("--filter-l7=http"),
+            Some("--payload=http_req"),
+            &common,
+            &strategy.desync,
+            WinwsPayload::Http,
+        );
+    }
+
+    let tls_ports = without_port(&strategy.filters.tcp_ports, 80);
+    if !tls_ports.is_empty() {
+        push_winws2_profile(
+            &mut args,
+            format!("--filter-tcp={}", format_port_ranges(&tls_ports)),
+            Some("--filter-l7=tls"),
+            Some("--payload=tls_client_hello"),
+            &common,
+            &strategy.desync,
+            WinwsPayload::Tls,
+        );
+    }
+
+    if contains_port(&strategy.filters.udp_ports, 443) {
+        push_winws2_profile(
+            &mut args,
+            "--filter-udp=443".to_owned(),
+            Some("--filter-l7=quic"),
+            Some("--payload=quic_initial"),
+            &common,
+            &strategy.desync,
+            WinwsPayload::Quic,
+        );
+    }
+
+    let other_udp = without_port(&strategy.filters.udp_ports, 443);
+    if !other_udp.is_empty() {
+        push_winws2_profile(
+            &mut args,
+            format!("--filter-udp={}", format_port_ranges(&other_udp)),
+            Some("--filter-l7=stun,discord"),
+            Some("--payload=stun,discord_ip_discovery"),
+            &[],
+            &strategy.desync,
+            WinwsPayload::GenericUdp,
+        );
+    }
+
+    Ok(args)
+}
+
+fn push_winws2_profile(
+    args: &mut Vec<String>,
+    filter: String,
+    l7: Option<&str>,
+    payload: Option<&str>,
+    common: &[String],
+    stages: &[DesyncStage],
+    kind: WinwsPayload,
+) {
+    if args.iter().any(|arg| arg.starts_with("--filter-")) {
+        args.push("--new".to_owned());
+    }
+    args.push(filter);
+    if let Some(l7) = l7 {
+        args.push(l7.to_owned());
+    }
+    args.extend(common.iter().cloned());
+    if let Some(payload) = payload {
+        args.push(payload.to_owned());
+    }
+    compile_winws2_desync(stages, kind, args);
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum WinwsPayload {
+    Http,
+    Tls,
+    Quic,
+    GenericUdp,
+}
+
+impl WinwsPayload {
+    const fn fake_blob(self) -> &'static str {
+        match self {
+            Self::Http => "fake_default_http",
+            Self::Tls => "fake_default_tls",
+            Self::Quic => "fake_default_quic",
+            Self::GenericUdp => "0x00000000000000000000000000000000",
+        }
+    }
+
+    const fn is_tcp(self) -> bool {
+        matches!(self, Self::Http | Self::Tls)
+    }
+
+    const fn is_udp(self) -> bool {
+        matches!(self, Self::Quic | Self::GenericUdp)
+    }
+}
+
+fn compile_winws2_desync(stages: &[DesyncStage], kind: WinwsPayload, args: &mut Vec<String>) {
+    for stage in stages {
+        match stage {
+            DesyncStage::Fake { repeats } => args.push(format!(
+                "--lua-desync=fake:blob={}:repeats={repeats}",
+                kind.fake_blob()
+            )),
+            DesyncStage::MultiSplit { positions } if kind.is_tcp() => args.push(format!(
+                "--lua-desync=multisplit:pos={}",
+                format_positions(positions)
+            )),
+            DesyncStage::MultiDisorder { positions } if kind.is_tcp() => args.push(format!(
+                "--lua-desync=multidisorder:pos={}",
+                format_positions(positions)
+            )),
+            DesyncStage::FakeSplit { position } if kind.is_tcp() => {
+                args.push(format!("--lua-desync=fakedsplit:pos={position}"));
+            }
+            DesyncStage::UdpLength { increment } if kind.is_udp() => {
+                args.push(format!("--lua-desync=udplen:increment={increment}"));
+            }
+            DesyncStage::IpFragment2 => {
+                args.push("--lua-desync=send:ipfrag".to_owned());
+                args.push("--lua-desync=drop".to_owned());
+            }
+            _ => {}
+        }
+    }
+}
+
+fn compile_list_args(
     strategy: &StrategyDefinition,
     base: &Path,
 ) -> Result<Vec<String>, CompileError> {
@@ -99,13 +267,12 @@ fn compile_common_args(
         ));
     }
 
-    compile_desync(&strategy.desync, &mut args)?;
     Ok(args)
 }
 
-fn compile_desync(stages: &[DesyncStage], args: &mut Vec<String>) -> Result<(), CompileError> {
+fn compile_v1_desync(stages: &[DesyncStage], args: &mut Vec<String>) {
     if stages.is_empty() {
-        return Ok(());
+        return;
     }
 
     let mut modes = Vec::new();
@@ -149,19 +316,62 @@ fn compile_desync(stages: &[DesyncStage], args: &mut Vec<String>) -> Result<(), 
     if !split_positions.is_empty() {
         split_positions.sort_unstable();
         split_positions.dedup();
-        let value = split_positions
-            .iter()
-            .map(u16::to_string)
-            .collect::<Vec<_>>()
-            .join(",");
-        args.push(format!("--dpi-desync-split-pos={value}"));
+        args.push(format!(
+            "--dpi-desync-split-pos={}",
+            format_positions(&split_positions)
+        ));
     }
 
     if let Some(value) = udp_increment {
         args.push(format!("--dpi-desync-udplen-increment={value}"));
     }
+}
 
-    Ok(())
+fn push_new_if_needed(args: &mut Vec<String>) {
+    if !args.is_empty() {
+        args.push("--new".to_owned());
+    }
+}
+
+fn contains_port(ranges: &[PortRange], port: u16) -> bool {
+    ranges
+        .iter()
+        .any(|range| range.start <= port && port <= range.end)
+}
+
+fn without_port(ranges: &[PortRange], port: u16) -> Vec<PortRange> {
+    let mut output = Vec::new();
+    for range in ranges {
+        if port < range.start || port > range.end {
+            output.push(*range);
+            continue;
+        }
+
+        if range.start < port {
+            output.push(PortRange {
+                start: range.start,
+                end: port - 1,
+            });
+        }
+        if port < range.end {
+            output.push(PortRange {
+                start: port + 1,
+                end: range.end,
+            });
+        }
+    }
+    output
+}
+
+fn format_positions(positions: &[u16]) -> String {
+    let mut positions = positions.to_vec();
+    positions.sort_unstable();
+    positions.dedup();
+    positions
+        .iter()
+        .map(u16::to_string)
+        .collect::<Vec<_>>()
+        .join(",")
 }
 
 fn format_port_ranges(ranges: &[PortRange]) -> String {
@@ -251,7 +461,7 @@ positions = [2, 1]
 "#;
 
     #[test]
-    fn compiles_deterministically() {
+    fn compiles_v1_deterministically() {
         let strategy = StrategyDefinition::parse(STRATEGY).expect("valid strategy");
         let compiled = compile_strategy(
             &strategy,
@@ -271,10 +481,55 @@ positions = [2, 1]
                 .count(),
             2
         );
+    }
+
+    #[test]
+    fn compiles_winws2_capture_and_lua_profiles() {
+        let strategy = StrategyDefinition::parse(STRATEGY).expect("valid strategy");
+        let compiled = compile_strategy(
+            &strategy,
+            Path::new("strategy.toml"),
+            EngineFlavor::Winws,
+        )
+        .expect("compile");
+
+        assert_eq!(compiled.args[0], "--wf-tcp-out=80,443");
+        assert_eq!(compiled.args[1], "--wf-udp-out=443");
         assert!(
             compiled
                 .args
-                .contains(&"--dpi-desync-split-pos=1,2".to_owned())
+                .contains(&"--lua-init=@zapret-lib.lua".to_owned())
+        );
+        assert!(
+            compiled
+                .args
+                .contains(&"--lua-desync=fake:blob=fake_default_http:repeats=2".to_owned())
+        );
+        assert!(
+            compiled
+                .args
+                .contains(&"--lua-desync=fake:blob=fake_default_tls:repeats=2".to_owned())
+        );
+        assert!(
+            compiled
+                .args
+                .contains(&"--lua-desync=fake:blob=fake_default_quic:repeats=2".to_owned())
+        );
+        assert!(!compiled.args.iter().any(|arg| arg.starts_with("--dpi-desync")));
+    }
+
+    #[test]
+    fn splits_capture_profiles_around_http_and_quic_ports() {
+        let ranges = vec![PortRange {
+            start: 79,
+            end: 81,
+        }];
+        assert_eq!(
+            without_port(&ranges, 80),
+            vec![
+                PortRange { start: 79, end: 79 },
+                PortRange { start: 81, end: 81 }
+            ]
         );
     }
 
