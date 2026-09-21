@@ -200,6 +200,24 @@ pub fn install_pf_routes(
     }
 }
 
+pub fn owned_pf_anchor_has_rules() -> Result<bool, MacOsError> {
+    if Platform::detect() != Platform::MacOS {
+        return Ok(false);
+    }
+    let output = Command::new("/sbin/pfctl")
+        .args(["-a", PF_ANCHOR, "-sr"])
+        .output()
+        .map_err(|source| MacOsError::CommandIo {
+            program: "/sbin/pfctl".to_owned(),
+            source,
+        })?;
+    Ok(output.status.success()
+        && output
+            .stdout
+            .split(|byte| *byte == b'\n')
+            .any(|line| !line.iter().all(u8::is_ascii_whitespace)))
+}
+
 pub fn clear_owned_pf_anchor() -> Result<(), MacOsError> {
     run_checked("/sbin/pfctl", &["-a", PF_ANCHOR, "-F", "all"])
 }
