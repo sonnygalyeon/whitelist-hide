@@ -1,4 +1,5 @@
 name: generate-lockfiles
+# Temporary release-candidate lock refresh; remove before merge.
 
 on:
   push:
