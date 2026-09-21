@@ -78,6 +78,19 @@ pub fn default_config_path() -> PathBuf {
     }
 }
 
+pub fn system_config_path() -> PathBuf {
+    match Platform::detect() {
+        Platform::Windows => std::env::var_os("PROGRAMDATA")
+            .map(PathBuf::from)
+            .unwrap_or_else(|| PathBuf::from(r"C:\ProgramData"))
+            .join("whitelist-hide")
+            .join("config.toml"),
+        Platform::MacOS => PathBuf::from("/Library/Application Support/whitelist-hide/config.toml"),
+        Platform::Linux => PathBuf::from("/etc/whitelist-hide/config.toml"),
+        Platform::Unsupported => PathBuf::from("config.toml"),
+    }
+}
+
 pub fn runtime_state_path() -> PathBuf {
     match Platform::detect() {
         Platform::Windows => std::env::var_os("PROGRAMDATA")
