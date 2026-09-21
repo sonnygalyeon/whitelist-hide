@@ -159,7 +159,7 @@ fn reexec_elevated(args: &[String]) -> i32 {
 
     let quoted_args = args
         .iter()
-        .map(|arg| format!("\\"{}\\"", arg.replace('"', "\\\"")))
+        .map(|arg| format!("\"{}\"", arg.replace('"', "\\\"")))
         .collect::<Vec<_>>()
         .join(" ");
 
@@ -199,7 +199,7 @@ fn forward_elevated_output(output: Output) -> i32 {
 
 #[cfg(target_os = "macos")]
 fn shell_quote(value: &str) -> String {
-    format!("'{}'", value.replace(''', "'\"'\"'"))
+    format!("'{}'", value.replace('\'', "'\"'\"'"))
 }
 
 #[cfg(target_os = "macos")]
