@@ -24,6 +24,7 @@ The branch `ver1.0` must not be created or made the default branch until every r
 
 - [ ] Every shipped engine/driver has source, version/commit, license and SHA-256 metadata.
 - [ ] Release artifacts are built by documented CI.
+- [ ] Root Cargo.lock is committed and release builds use `--locked`.
 - [ ] No runtime telemetry.
 - [ ] No silent executable downloads.
 - [ ] No arbitrary shell execution from GUI/helper IPC.
