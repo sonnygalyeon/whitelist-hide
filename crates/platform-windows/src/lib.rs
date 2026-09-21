@@ -36,25 +36,26 @@ impl PlatformBackend for WindowsBackend {
             return Ok(unsupported());
         }
 
-        let mut diagnostics = Vec::new();
-        diagnostics.push(run_diag(
-            "whoami",
-            &["/user"],
-            "identity",
-            "Current Windows identity",
-        ));
-        diagnostics.push(run_diag(
-            "route",
-            &["print", "0.0.0.0"],
-            "default_route",
-            "IPv4 default route",
-        ));
-        diagnostics.push(run_diag(
-            "sc",
-            &["query", "WinDivert"],
-            "windivert",
-            "WinDivert service",
-        ));
+        let diagnostics = vec![
+            run_diag(
+                "whoami",
+                &["/user"],
+                "identity",
+                "Current Windows identity",
+            ),
+            run_diag(
+                "route",
+                &["print", "0.0.0.0"],
+                "default_route",
+                "IPv4 default route",
+            ),
+            run_diag(
+                "sc",
+                &["query", "WinDivert"],
+                "windivert",
+                "WinDivert service",
+            ),
+        ];
 
         let degraded = diagnostics
             .iter()
