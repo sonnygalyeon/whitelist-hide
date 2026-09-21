@@ -126,9 +126,7 @@ impl StrategyAction {
             Self::Split { position } if *position == 0 => Err(StrategyError::Invalid(format!(
                 "split position must be positive in rule {rule}"
             ))),
-            Self::MultiSplit { positions }
-                if positions.is_empty() || positions.contains(&0) =>
-            {
+            Self::MultiSplit { positions } if positions.is_empty() || positions.contains(&0) => {
                 Err(StrategyError::Invalid(format!(
                     "multisplit positions must be non-empty and positive in rule {rule}"
                 )))
