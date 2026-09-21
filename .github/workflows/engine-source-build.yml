@@ -3,6 +3,8 @@ name: engine-source-build
 on:
   workflow_dispatch:
   push:
+    tags:
+      - "v*"
     paths:
       - "third_party/upstream.lock.toml"
       - "scripts/upstream_lock.py"
