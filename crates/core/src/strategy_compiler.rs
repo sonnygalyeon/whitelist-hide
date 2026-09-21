@@ -23,7 +23,17 @@ pub fn compile_strategy(
     let mut referenced_files = Vec::new();
 
     let domain_lists = resolve_lists(base, &strategy.filters.domain_lists, &mut referenced_files)?;
+    let domain_excludes = resolve_lists(
+        base,
+        &strategy.filters.domain_exclude_lists,
+        &mut referenced_files,
+    )?;
     let ip_lists = resolve_lists(base, &strategy.filters.ip_lists, &mut referenced_files)?;
+    let ip_excludes = resolve_lists(
+        base,
+        &strategy.filters.ip_exclude_lists,
+        &mut referenced_files,
+    )?;
 
     let mut arguments = Vec::new();
 
@@ -33,7 +43,9 @@ pub fn compile_strategy(
             "tcp",
             &strategy.filters.tcp_ports,
             &domain_lists,
+            &domain_excludes,
             &ip_lists,
+            &ip_excludes,
             &strategy.desync,
         );
     }
@@ -47,7 +59,9 @@ pub fn compile_strategy(
             "udp",
             &strategy.filters.udp_ports,
             &domain_lists,
+            &domain_excludes,
             &ip_lists,
+            &ip_excludes,
             &strategy.desync,
         );
     }
@@ -93,16 +107,26 @@ fn append_profile(
     protocol: &str,
     ports: &[PortRange],
     domains: &[PathBuf],
+    domain_excludes: &[PathBuf],
     ipsets: &[PathBuf],
+    ip_excludes: &[PathBuf],
     stages: &[DesyncStage],
 ) {
     out.push(format!("--filter-{protocol}={}", format_ports(ports)));
 
+    // Include filters are emitted first; excludes follow and therefore have
+    // deterministic precedence in every generated profile.
     for path in domains {
         out.push(format!("--hostlist={}", path.display()));
     }
+    for path in domain_excludes {
+        out.push(format!("--hostlist-exclude={}", path.display()));
+    }
     for path in ipsets {
         out.push(format!("--ipset={}", path.display()));
+    }
+    for path in ip_excludes {
+        out.push(format!("--ipset-exclude={}", path.display()));
     }
 
     let mut modes = Vec::new();
@@ -239,6 +263,7 @@ mod tests {
         let lists = root.join("lists");
         fs::create_dir_all(&lists).expect("create test dir");
         fs::write(lists.join("general.txt"), "example.com\n").expect("write list");
+        fs::write(lists.join("exclude.txt"), "safe.example\n").expect("write exclude");
 
         let strategy = StrategyDefinition::parse(
             r#"
@@ -249,6 +274,7 @@ id = "test"
 tcp_ports = [{ start = 443, end = 443 }]
 udp_ports = [{ start = 443, end = 443 }]
 domain_lists = ["lists/general.txt"]
+domain_exclude_lists = ["lists/exclude.txt"]
 
 [[desync]]
 mode = "fake"
@@ -267,6 +293,17 @@ positions = [2, 1]
         assert!(plan.arguments.contains(&"--filter-tcp=443".to_owned()));
         assert!(plan.arguments.contains(&"--filter-udp=443".to_owned()));
         assert!(plan.arguments.contains(&"--new".to_owned()));
+        let include = plan
+            .arguments
+            .iter()
+            .position(|arg| arg.starts_with("--hostlist="))
+            .expect("include");
+        let exclude = plan
+            .arguments
+            .iter()
+            .position(|arg| arg.starts_with("--hostlist-exclude="))
+            .expect("exclude");
+        assert!(include < exclude);
         assert!(
             plan.arguments
                 .contains(&"--dpi-desync-split-pos=1,2".to_owned())
