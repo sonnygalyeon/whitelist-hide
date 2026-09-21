@@ -5,6 +5,7 @@ members = [
     "crates/runtime",
     "crates/service",
     "crates/controller",
+    "crates/helper",
     "crates/platform-macos",
     "crates/platform-windows",
     "crates/platform-linux",
