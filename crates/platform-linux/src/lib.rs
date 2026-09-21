@@ -121,7 +121,6 @@ fn nft_ports(ranges: &[PortRange]) -> String {
         .join(", ")
 }
 
-
 pub struct LinuxBackend;
 
 impl LinuxBackend {
@@ -343,8 +342,17 @@ mod mutation_tests {
     #[test]
     fn nft_plan_is_scoped_and_uses_bypass() {
         let rules = nft_rules(
-            &[PortRange { start: 80, end: 80 }, PortRange { start: 443, end: 443 }],
-            &[PortRange { start: 443, end: 443 }],
+            &[
+                PortRange { start: 80, end: 80 },
+                PortRange {
+                    start: 443,
+                    end: 443,
+                },
+            ],
+            &[PortRange {
+                start: 443,
+                end: 443,
+            }],
             NFQUEUE_NUM,
         );
         assert!(rules.contains("table inet whitelist_hide"));
