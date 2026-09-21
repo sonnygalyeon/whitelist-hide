@@ -1,3 +1,4 @@
+use serde::{Deserialize, Serialize};
 //! Platform-neutral control-plane types for whitelist-hide.
 //!
 //! The core crate intentionally performs no privileged network modification.
@@ -10,7 +11,8 @@ pub mod strategy_compile;
 use std::fmt;
 
 /// Operating systems supported by the project architecture.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
 pub enum Platform {
     Windows,
     MacOS,
