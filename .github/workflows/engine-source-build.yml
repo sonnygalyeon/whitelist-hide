@@ -6,11 +6,13 @@ on:
     paths:
       - "third_party/upstream.lock.toml"
       - "scripts/upstream_lock.py"
+      - "scripts/windivert_lock.py"
       - ".github/workflows/engine-source-build.yml"
   pull_request:
     paths:
       - "third_party/upstream.lock.toml"
       - "scripts/upstream_lock.py"
+      - "scripts/windivert_lock.py"
       - ".github/workflows/engine-source-build.yml"
 
 permissions:
@@ -187,6 +189,44 @@ jobs:
           cp "$SUBDIR/$ARTIFACT" "../dist/windows/$ARTIFACT" &&
           sha256sum "../dist/windows/$ARTIFACT" > ../dist/windows/SHA256SUMS &&
           printf 'source_commit=%s\nlicense=%s\nbuilder=github-actions/windows-latest+cygwin\n' "$COMMIT" "$LICENSE_NAME" > ../dist/windows/PROVENANCE.txt
+
+      - name: Read pinned WinDivert release
+        id: windivert
+        shell: pwsh
+        run: python scripts/windivert_lock.py --github-output "$env:GITHUB_OUTPUT"
+
+      - name: Verify and stage WinDivert
+        shell: pwsh
+        env:
+          ASSET_URL: ${{ steps.windivert.outputs.asset_url }}
+          EXPECTED_SHA256: ${{ steps.windivert.outputs.sha256 }}
+          WINDIVERT_COMMIT: ${{ steps.windivert.outputs.commit }}
+          WINDIVERT_VERSION: ${{ steps.windivert.outputs.version }}
+          WINDIVERT_LICENSE: ${{ steps.windivert.outputs.license }}
+        run: |
+          Invoke-WebRequest -Uri $env:ASSET_URL -OutFile windivert.zip
+          $actual = (Get-FileHash windivert.zip -Algorithm SHA256).Hash.ToLowerInvariant()
+          if ($actual -ne $env:EXPECTED_SHA256) { throw "WinDivert SHA-256 mismatch" }
+          Expand-Archive -Path windivert.zip -DestinationPath windivert -Force
+
+          $dll = Get-ChildItem windivert -Recurse -Filter WinDivert.dll | Where-Object { $_.FullName -match '[\\/]x64[\\/]' }
+          $sys = Get-ChildItem windivert -Recurse -Filter WinDivert64.sys | Where-Object { $_.FullName -match '[\\/]x64[\\/]' }
+          if (@($dll).Count -ne 1 -or @($sys).Count -ne 1) { throw "unexpected WinDivert package layout" }
+
+          Copy-Item $dll.FullName dist/windows/WinDivert.dll
+          Copy-Item $sys.FullName dist/windows/WinDivert64.sys
+          (Get-FileHash dist/windows/WinDivert.dll -Algorithm SHA256).Hash.ToLowerInvariant() + "  WinDivert.dll" | Add-Content -Encoding ascii dist/windows/SHA256SUMS
+          (Get-FileHash dist/windows/WinDivert64.sys -Algorithm SHA256).Hash.ToLowerInvariant() + "  WinDivert64.sys" | Add-Content -Encoding ascii dist/windows/SHA256SUMS
+
+          "windivert_version=$env:WINDIVERT_VERSION" | Add-Content -Encoding ascii dist/windows/PROVENANCE.txt
+          "windivert_commit=$env:WINDIVERT_COMMIT" | Add-Content -Encoding ascii dist/windows/PROVENANCE.txt
+          "windivert_release_sha256=$actual" | Add-Content -Encoding ascii dist/windows/PROVENANCE.txt
+          "windivert_license=$env:WINDIVERT_LICENSE" | Add-Content -Encoding ascii dist/windows/PROVENANCE.txt
+
+      - name: Record winws runtime dependencies
+        shell: pwsh
+        run: |
+          & C:\cygwin\bin\cygcheck.exe (Resolve-Path dist/windows/winws.exe) | Out-File -Encoding ascii dist/windows/DEPENDENCIES.txt
 
       - name: Upload source-built Windows engine
         uses: actions/upload-artifact@v4

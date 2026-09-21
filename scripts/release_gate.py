@@ -60,6 +60,28 @@ def check_upstream_lock() -> list[str]:
             failures.append(f"{platform} license metadata is missing")
         if not entry.get("repository"):
             failures.append(f"{platform} repository metadata is missing")
+    driver = data.get("windows_driver")
+    if not isinstance(driver, dict):
+        failures.append("missing upstream lock section: windows_driver")
+    else:
+        if driver.get("status") != "pinned-release-verified":
+            failures.append(
+                f"Windows driver release is not verified: {driver.get('status')!r}"
+            )
+        digest = driver.get("sha256", "")
+        if (
+            not isinstance(digest, str)
+            or len(digest) != 64
+            or any(char not in "0123456789abcdef" for char in digest)
+        ):
+            failures.append("windows_driver.sha256 must be 64 lowercase hex characters")
+        commit = driver.get("commit", "")
+        if not isinstance(commit, str) or len(commit) != 40:
+            failures.append("windows_driver.commit must be an exact 40-char SHA")
+        for key in ("repository", "version", "license", "asset_url"):
+            if not driver.get(key):
+                failures.append(f"windows_driver.{key} metadata is missing")
+
     return failures
 
 
@@ -73,6 +95,7 @@ def main() -> int:
     print("release metadata gate: OK")
     print("tracked opaque binaries: none")
     print("source-build metadata: macOS/Linux/Windows enabled")
+    print("WinDivert release metadata and SHA-256: pinned")
     return 0
 
 
