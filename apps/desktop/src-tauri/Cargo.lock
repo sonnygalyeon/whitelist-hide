@@ -3950,17 +3950,9 @@ name = "whitelist-hide-desktop"
 version = "0.1.0"
 dependencies = [
  "serde",
+ "serde_json",
  "tauri",
  "tauri-build",
- "whitelist-hide-core",
- "whitelist-hide-orchestrator",
- "whitelist-hide-runtime",
-]
-
-[[package]]
-name = "whitelist-hide-orchestrator"
-version = "0.1.0"
-dependencies = [
  "whitelist-hide-core",
  "whitelist-hide-runtime",
 ]
