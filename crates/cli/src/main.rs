@@ -1,7 +1,11 @@
 use std::env;
 use std::path::{Path, PathBuf};
 
+use whitelist_hide_controller::{
+    start as session_start, status as session_status, stop as session_stop,
+};
 use whitelist_hide_core::artifact::{ArtifactManifest, VerificationReport, verify_file};
+use whitelist_hide_core::compiler::{compile_strategy, target_for_current_platform};
 use whitelist_hide_core::config::AppConfig;
 use whitelist_hide_core::strategy::StrategyDefinition;
 use whitelist_hide_core::{DoctorReport, Platform};
@@ -69,6 +73,17 @@ fn main() {
         [group, action, path] if group == "strategy" && action == "validate" => {
             strategy_validate(Path::new(path))
         }
+        [group, action, path] if group == "strategy" && action == "compile" => {
+            strategy_compile(Path::new(path))
+        }
+        [group, action] if group == "run" && action == "start" => {
+            run_start(&config_path())
+        }
+        [group, action, path] if group == "run" && action == "start" => {
+            run_start(Path::new(path))
+        }
+        [group, action] if group == "run" && action == "stop" => run_stop(),
+        [group, action] if group == "run" && action == "status" => run_status(),
         [group, platform, action] if group == "backend" && action == "inspect" => {
             backend_inspect(platform)
         }
@@ -322,6 +337,99 @@ fn strategy_validate(path: &Path) -> i32 {
     }
 }
 
+
+fn strategy_compile(path: &Path) -> i32 {
+    let strategy = match StrategyDefinition::load(path) {
+        Ok(strategy) => strategy,
+        Err(error) => {
+            eprintln!("strategy: INVALID");
+            eprintln!("reason: {error}");
+            return 2;
+        }
+    };
+
+    let Some(target) = target_for_current_platform(whitelist_hide_controller::NFQUEUE_NUM) else {
+        eprintln!("strategy: unsupported platform");
+        return 4;
+    };
+
+    match compile_strategy(&strategy, path, target) {
+        Ok(compiled) => {
+            println!("strategy: COMPILED");
+            println!("id: {}", strategy.id);
+            for argument in compiled.args {
+                println!("{argument}");
+            }
+            0
+        }
+        Err(error) => {
+            eprintln!("strategy: INVALID");
+            eprintln!("reason: {error}");
+            2
+        }
+    }
+}
+
+fn run_start(path: &Path) -> i32 {
+    match session_start(path) {
+        Ok(report) => {
+            println!("session: started");
+            println!("platform: {}", report.platform);
+            println!("strategy: {}", report.strategy);
+            println!("engine pid: {}", report.engine_pid);
+            println!("runtime state: {}", report.runtime_state.display());
+            0
+        }
+        Err(error) => {
+            eprintln!("session: FAILED");
+            eprintln!("reason: {error}");
+            5
+        }
+    }
+}
+
+fn run_stop() -> i32 {
+    match session_stop() {
+        Ok(true) => {
+            println!("session: stopped");
+            0
+        }
+        Ok(false) => {
+            println!("session: already stopped");
+            0
+        }
+        Err(error) => {
+            eprintln!("session stop: FAILED");
+            eprintln!("reason: {error}");
+            5
+        }
+    }
+}
+
+fn run_status() -> i32 {
+    match session_status() {
+        Ok(status) => {
+            println!("platform: {}", status.platform);
+            println!("running: {}", status.running);
+            println!("healthy: {}", status.healthy);
+            println!(
+                "engine pid: {}",
+                status
+                    .engine_pid
+                    .map(|value| value.to_string())
+                    .unwrap_or_else(|| "none".to_owned())
+            );
+            println!("{}", status.detail);
+            if status.healthy { 0 } else { 6 }
+        }
+        Err(error) => {
+            eprintln!("session status: FAILED");
+            eprintln!("reason: {error}");
+            5
+        }
+    }
+}
+
 fn config_validate(path: &Path) -> i32 {
     match AppConfig::load(path) {
         Ok(config) => {
@@ -503,7 +611,7 @@ fn runtime_state_path() -> PathBuf {
 
 fn help() {
     println!(
-        "whitelist-hide {}\n\nUSAGE:\n    whitelist-hide <COMMAND>\n\nCOMMANDS:\n    doctor\n        Read-only platform diagnostics\n\n    status\n        Show state from the runtime ownership journal\n\n    runtime state-path\n        Show the default runtime journal path\n\n    runtime show [PATH]\n        Read and validate a runtime journal\n\n    config-path\n        Show the default configuration path\n\n    config validate [PATH]\n        Validate a TOML configuration without touching the network\n\n    config verify [PATH]\n        Validate configuration and verify its engine artifact\n\n    engine verify <MANIFEST> <BINARY>\n        Verify artifact SHA-256 and platform against its manifest\n\n    engine launch <MANIFEST> <BINARY> [ARGS...]\n        Launch only a verified engine and record its owned PID\n\n    engine stop\n        Stop only the engine process whose identity matches the runtime journal\n\n    strategy validate <PATH>\n        Validate a structured strategy without executing it\n\n    backend <macos|windows|linux> inspect\n        Inspect host prerequisites and current backend state\n\n    backend <macos|windows|linux> plan <start|stop|cleanup>\n        Print a structured action plan without applying it\n\n    backend macos cleanup --apply\n        Flush only the whitelist-hide pf anchor (requires privileges)\n\n    version\n        Show version\n\n    help\n        Show this help",
+        "whitelist-hide {}\n\nUSAGE:\n    whitelist-hide <COMMAND>\n\nCOMMANDS:\n    doctor\n        Read-only platform diagnostics\n\n    status\n        Show state from the runtime ownership journal\n\n    runtime state-path\n        Show the default runtime journal path\n\n    runtime show [PATH]\n        Read and validate a runtime journal\n\n    config-path\n        Show the default configuration path\n\n    config validate [PATH]\n        Validate a TOML configuration without touching the network\n\n    config verify [PATH]\n        Validate configuration and verify its engine artifact\n\n    engine verify <MANIFEST> <BINARY>\n        Verify artifact SHA-256 and platform against its manifest\n\n    engine launch <MANIFEST> <BINARY> [ARGS...]\n        Launch only a verified engine and record its owned PID\n\n    engine stop\n        Stop only the engine process whose identity matches the runtime journal\n\n    strategy validate <PATH>\n        Validate a structured strategy without executing it\n\n    strategy compile <PATH>\n        Compile a validated strategy into engine argv for this platform\n\n    run start [CONFIG]\n        Start a verified cross-platform session with rollback and watchdog\n\n    run stop\n        Remove owned packet rules and stop the recorded engine\n\n    run status\n        Show engine and packet-path health\n\n    backend <macos|windows|linux> inspect\n        Inspect host prerequisites and current backend state\n\n    backend <macos|windows|linux> plan <start|stop|cleanup>\n        Print a structured action plan without applying it\n\n    backend macos cleanup --apply\n        Flush only the whitelist-hide pf anchor (requires privileges)\n\n    version\n        Show version\n\n    help\n        Show this help",
         env!("CARGO_PKG_VERSION")
     );
 }
