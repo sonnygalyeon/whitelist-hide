@@ -81,6 +81,9 @@ jobs:
       - name: Build frontend
         working-directory: apps/desktop
         run: npm run build
+      - name: Generate platform icons
+        working-directory: apps/desktop
+        run: npx tauri icon app-icon.svg
       - name: Build privileged helper
         run: cargo build --release --locked -p whitelist-hide-helper
       - name: Prepare helper sidecar on Unix
