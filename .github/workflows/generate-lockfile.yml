@@ -1,0 +1,25 @@
+name: generate-lockfile
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - ".github/workflows/generate-lockfile.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  lock:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Generate workspace lockfile
+        run: cargo generate-lockfile
+      - name: Print lockfile for review
+        shell: bash
+        run: |
+          echo "===WHITELIST_HIDE_CARGO_LOCK_BEGIN==="
+          cat Cargo.lock
+          echo "===WHITELIST_HIDE_CARGO_LOCK_END==="
