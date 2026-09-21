@@ -1,7 +1,4 @@
-use std::env;
-use std::path::PathBuf;
-use std::process::Command;
-
+use tauri_plugin_shell::ShellExt;
 use whitelist_hide_core::Platform;
 use whitelist_hide_linux::LinuxBackend;
 use whitelist_hide_macos::MacOsBackend;
@@ -30,26 +27,44 @@ fn backend_status() -> Result<BackendStatus, String> {
 }
 
 #[tauri::command]
-fn session_start(config: String, strategy: String) -> Result<String, String> {
-    invoke_helper(&["start", &config, &strategy], false)
+async fn session_start(
+    app: tauri::AppHandle,
+    config: String,
+    strategy: String,
+) -> Result<String, String> {
+    invoke_helper(
+        &app,
+        vec!["start".to_owned(), config, strategy],
+        false,
+    )
+    .await
 }
 
 #[tauri::command]
-fn session_stop() -> Result<String, String> {
-    invoke_helper(&["stop"], false)
+async fn session_stop(app: tauri::AppHandle) -> Result<String, String> {
+    invoke_helper(&app, vec!["stop".to_owned()], false).await
 }
 
 #[tauri::command]
-fn session_health() -> Result<String, String> {
-    invoke_helper(&["health"], true)
+async fn session_health(app: tauri::AppHandle) -> Result<String, String> {
+    invoke_helper(&app, vec!["health".to_owned()], true).await
 }
 
-fn invoke_helper(args: &[&str], allow_not_running: bool) -> Result<String, String> {
-    let helper = helper_path()?;
-    let output = Command::new(&helper)
-        .args(args)
+async fn invoke_helper(
+    app: &tauri::AppHandle,
+    args: Vec<String>,
+    allow_not_running: bool,
+) -> Result<String, String> {
+    let command = app
+        .shell()
+        .sidecar("whitelist-hide-helper")
+        .map_err(|error| format!("failed to resolve bundled privileged helper: {error}"))?
+        .args(args);
+
+    let output = command
         .output()
-        .map_err(|error| format!("failed to start {}: {error}", helper.display()))?;
+        .await
+        .map_err(|error| format!("failed to execute bundled privileged helper: {error}"))?;
 
     let stdout = String::from_utf8_lossy(&output.stdout).trim().to_owned();
     let stderr = String::from_utf8_lossy(&output.stderr).trim().to_owned();
@@ -69,42 +84,10 @@ fn invoke_helper(args: &[&str], allow_not_running: bool) -> Result<String, Strin
     }
 }
 
-fn helper_path() -> Result<PathBuf, String> {
-    if let Some(explicit) = env::var_os("WHITELIST_HIDE_HELPER") {
-        let path = PathBuf::from(explicit);
-        if path.is_file() {
-            return Ok(path);
-        }
-        return Err(format!(
-            "WHITELIST_HIDE_HELPER does not point to a file: {}",
-            path.display()
-        ));
-    }
-
-    let current = env::current_exe().map_err(|error| error.to_string())?;
-    let directory = current
-        .parent()
-        .ok_or_else(|| "application executable has no parent directory".to_owned())?;
-
-    #[cfg(target_os = "windows")]
-    let helper_name = "whitelist-hide-helper.exe";
-    #[cfg(not(target_os = "windows"))]
-    let helper_name = "whitelist-hide-helper";
-
-    let candidate = directory.join(helper_name);
-    if candidate.is_file() {
-        Ok(candidate)
-    } else {
-        Err(format!(
-            "bundled privileged helper was not found at {}",
-            candidate.display()
-        ))
-    }
-}
-
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
+        .plugin(tauri_plugin_shell::init())
         .invoke_handler(tauri::generate_handler![
             app_version,
             backend_status,
