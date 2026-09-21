@@ -7,7 +7,9 @@ use std::process::{Command, Stdio};
 use std::thread;
 use std::time::Duration;
 
-use whitelist_hide_core::artifact::{ArtifactError, ArtifactManifest, verify_file};
+use whitelist_hide_core::artifact::{
+    ArtifactError, ArtifactManifest, verify_companions, verify_file,
+};
 
 use serde::{Deserialize, Serialize};
 
@@ -322,6 +324,17 @@ pub fn launch_verified_engine_with_env(
         });
     }
 
+    let companion_reports = verify_companions(&manifest, &binary)?;
+    if let Some(report) = companion_reports.iter().find(|report| !report.trusted()) {
+        return Err(EngineRuntimeError::UntrustedCompanion {
+            filename: report.name.clone(),
+            expected_sha256: report.expected_sha256.clone(),
+            actual_sha256: report.actual_sha256.clone(),
+            expected_platform: report.expected_platform.clone(),
+            actual_platform: report.actual_platform.clone(),
+        });
+    }
+
     let mut state = RuntimeState::new(session_id, verification.actual_platform.clone());
     state.engine_binary = Some(binary.clone());
     store.save(&state)?;
@@ -550,6 +563,13 @@ pub enum EngineRuntimeError {
         expected_platform: String,
         actual_platform: String,
     },
+    UntrustedCompanion {
+        filename: String,
+        expected_sha256: String,
+        actual_sha256: String,
+        expected_platform: String,
+        actual_platform: String,
+    },
     ExitedEarly(Option<i32>),
     MissingEngineIdentity,
     ProcessIdentityMismatch {
@@ -590,6 +610,16 @@ impl fmt::Display for EngineRuntimeError {
             } => write!(
                 f,
                 "engine rejected: expected sha256={expected_sha256} platform={expected_platform}; actual sha256={actual_sha256} platform={actual_platform}"
+            ),
+            Self::UntrustedCompanion {
+                filename,
+                expected_sha256,
+                actual_sha256,
+                expected_platform,
+                actual_platform,
+            } => write!(
+                f,
+                "runtime companion {filename} rejected: expected sha256={expected_sha256} platform={expected_platform}; actual sha256={actual_sha256} platform={actual_platform}"
             ),
             Self::ExitedEarly(code) => {
                 write!(
