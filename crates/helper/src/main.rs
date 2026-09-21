@@ -1,6 +1,4 @@
-use whitelist_hide_controller::{
-    start, status, stop, system_config_path,
-};
+use whitelist_hide_controller::{start, status, stop, system_config_path};
 
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
