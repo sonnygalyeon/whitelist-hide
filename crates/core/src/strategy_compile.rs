@@ -57,6 +57,21 @@ pub fn compile_strategy(
     let common = compile_common_args(strategy, base)?;
     let mut args = Vec::new();
 
+    if engine == EngineFlavor::Winws {
+        if !strategy.filters.tcp_ports.is_empty() {
+            args.push(format!(
+                "--wf-tcp-out={}",
+                format_port_ranges(&strategy.filters.tcp_ports)
+            ));
+        }
+        if !strategy.filters.udp_ports.is_empty() {
+            args.push(format!(
+                "--wf-udp-out={}",
+                format_port_ranges(&strategy.filters.udp_ports)
+            ));
+        }
+    }
+
     if !strategy.filters.tcp_ports.is_empty() {
         args.push(format!(
             "--filter-tcp={}",
@@ -276,6 +291,22 @@ positions = [2, 1]
                 .args
                 .contains(&"--dpi-desync-split-pos=1,2".to_owned())
         );
+    }
+
+    #[test]
+    fn winws_adds_windivert_capture_filters() {
+        let strategy = StrategyDefinition::parse(STRATEGY).expect("valid strategy");
+        let compiled = compile_strategy(
+            &strategy,
+            Path::new("/tmp/whitelist-hide/strategy.toml"),
+            EngineFlavor::Winws,
+        )
+        .expect("compile");
+
+        assert_eq!(compiled.args[0], "--wf-tcp-out=80,443");
+        assert_eq!(compiled.args[1], "--wf-udp-out=443");
+        assert!(compiled.args.contains(&"--filter-tcp=80,443".to_owned()));
+        assert!(compiled.args.contains(&"--filter-udp=443".to_owned()));
     }
 
     #[test]
