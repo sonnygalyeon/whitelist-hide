@@ -1,18 +1,17 @@
 use std::error::Error;
 use std::fmt;
-use std::fs;
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::thread;
 use std::time::Duration;
 
+use whitelist_hide_core::Platform;
 use whitelist_hide_core::compiler::{
-    CompiledStrategy, EngineTarget, compile_strategy, target_for_current_platform,
+    CompiledStrategy, compile_strategy, target_for_current_platform,
 };
 use whitelist_hide_core::config::AppConfig;
 use whitelist_hide_core::strategy::{PortRange, StrategyDefinition, StrategyError};
-use whitelist_hide_core::Platform;
 use whitelist_hide_runtime::{
     EngineRuntimeError, RuntimePhase, RuntimeState, RuntimeStateError, StateStore,
     launch_verified_engine, launch_verified_engine_with_env, recorded_engine_alive,
@@ -178,8 +177,8 @@ fn prepare(config_path: &Path) -> Result<PreparedSession, ControllerError> {
     let config = AppConfig::load(config_path)?;
     let strategy_path = config.resolve_strategy_path(config_path);
     let strategy = StrategyDefinition::load(&strategy_path)?;
-    let target = target_for_current_platform(NFQUEUE_NUM)
-        .ok_or(ControllerError::UnsupportedPlatform)?;
+    let target =
+        target_for_current_platform(NFQUEUE_NUM).ok_or(ControllerError::UnsupportedPlatform)?;
     let compiled = compile_strategy(&strategy, &strategy_path, target)?;
     let engine = config.resolve_engine_paths(config_path);
 
@@ -208,9 +207,9 @@ fn start_linux(
 
     apply_linux_nft(&prepared.strategy)?;
 
-    let mut state = store
-        .load()?
-        .ok_or_else(|| ControllerError::State("runtime journal disappeared after launch".to_owned()))?;
+    let mut state = store.load()?.ok_or_else(|| {
+        ControllerError::State("runtime journal disappeared after launch".to_owned())
+    })?;
     state.owned_firewall_scope = Some(format!("inet:{LINUX_NFT_TABLE}"));
     store.save(&state)?;
 
@@ -303,7 +302,10 @@ fn start_macos(
     state.owned_firewall_scope = Some(MACOS_PF_ANCHOR.to_owned());
 
     let pf_info = command_text("/sbin/pfctl", &["-s", "info"])?;
-    if pf_info.lines().any(|line| line.trim().starts_with("Status: Disabled")) {
+    if pf_info
+        .lines()
+        .any(|line| line.trim().starts_with("Status: Disabled"))
+    {
         let enabled = command_text_combined("/sbin/pfctl", &["-E"])?;
         state.pf_token = parse_pf_token(&enabled);
         if state.pf_token.is_none() {
@@ -502,8 +504,8 @@ fn stop_if_owned(store: &StateStore) -> Result<(), ControllerError> {
 fn ensure_privileges() -> Result<(), ControllerError> {
     match Platform::detect() {
         Platform::Linux | Platform::MacOS => {
-            let uid = command_text("/usr/bin/id", &["-u"])
-                .or_else(|_| command_text("id", &["-u"]))?;
+            let uid =
+                command_text("/usr/bin/id", &["-u"]).or_else(|_| command_text("id", &["-u"]))?;
             if uid.trim() != "0" {
                 return Err(ControllerError::PrivilegeRequired);
             }
@@ -603,9 +605,9 @@ fn parse_arp_mac(text: &str) -> Option<String> {
         let (_, after) = line.split_once(" at ")?;
         let mac = after.split_whitespace().next()?;
         let valid = mac.split(':').count() == 6
-            && mac
-                .split(':')
-                .all(|part| !part.is_empty() && part.len() <= 2 && part.chars().all(|c| c.is_ascii_hexdigit()));
+            && mac.split(':').all(|part| {
+                !part.is_empty() && part.len() <= 2 && part.chars().all(|c| c.is_ascii_hexdigit())
+            });
         valid.then(|| mac.to_owned())
     })
 }
@@ -680,16 +682,20 @@ fn run_with_input(program: &str, args: &[&str], input: &[u8]) -> Result<(), Cont
         })?;
 
     if let Some(stdin) = child.stdin.as_mut() {
-        stdin.write_all(input).map_err(|source| ControllerError::Io {
+        stdin
+            .write_all(input)
+            .map_err(|source| ControllerError::Io {
+                path: PathBuf::from(program),
+                source,
+            })?;
+    }
+
+    let output = child
+        .wait_with_output()
+        .map_err(|source| ControllerError::Io {
             path: PathBuf::from(program),
             source,
         })?;
-    }
-
-    let output = child.wait_with_output().map_err(|source| ControllerError::Io {
-        path: PathBuf::from(program),
-        source,
-    })?;
 
     if output.status.success() {
         Ok(())
@@ -794,10 +800,7 @@ mod tests {
     #[test]
     fn parses_gateway_mac() {
         let arp = "? (192.168.1.1) at aa:bb:cc:dd:ee:ff on en0 ifscope [ethernet]";
-        assert_eq!(
-            parse_arp_mac(arp),
-            Some("aa:bb:cc:dd:ee:ff".to_owned())
-        );
+        assert_eq!(parse_arp_mac(arp), Some("aa:bb:cc:dd:ee:ff".to_owned()));
     }
 
     fn sample_strategy() -> StrategyDefinition {
@@ -813,7 +816,10 @@ mod tests {
                         end: 445,
                     },
                 ],
-                udp_ports: vec![PortRange { start: 443, end: 443 }],
+                udp_ports: vec![PortRange {
+                    start: 443,
+                    end: 443,
+                }],
                 domain_lists: Vec::new(),
                 domain_exclude_lists: Vec::new(),
                 ip_lists: Vec::new(),
