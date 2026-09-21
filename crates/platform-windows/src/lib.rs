@@ -80,10 +80,22 @@ impl PlatformBackend for WindowsBackend {
                 "Start Windows packet-processing backend",
                 false,
                 vec![
-                    step("verify", "Verify engine and WinDivert artifacts before loading them."),
-                    step("driver", "Load only the pinned WinDivert driver required by this session."),
-                    step("engine", "Start the owned packet engine with a structured strategy."),
-                    step("health", "Verify process health and packet path; rollback on failure."),
+                    step(
+                        "verify",
+                        "Verify engine and WinDivert artifacts before loading them.",
+                    ),
+                    step(
+                        "driver",
+                        "Load only the pinned WinDivert driver required by this session.",
+                    ),
+                    step(
+                        "engine",
+                        "Start the owned packet engine with a structured strategy.",
+                    ),
+                    step(
+                        "health",
+                        "Verify process health and packet path; rollback on failure.",
+                    ),
                 ],
             ),
             BackendAction::Stop => plan(
@@ -91,8 +103,14 @@ impl PlatformBackend for WindowsBackend {
                 "Stop Windows packet-processing backend",
                 false,
                 vec![
-                    step("engine", "Stop only the engine process recorded in runtime state."),
-                    step("driver", "Release only project-owned driver/service state where applicable."),
+                    step(
+                        "engine",
+                        "Stop only the engine process recorded in runtime state.",
+                    ),
+                    step(
+                        "driver",
+                        "Release only project-owned driver/service state where applicable.",
+                    ),
                     step("state", "Clear runtime state after verified cleanup."),
                 ],
             ),
