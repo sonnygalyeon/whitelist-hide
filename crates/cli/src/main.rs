@@ -68,9 +68,7 @@ fn main() {
             engine_launch(Path::new(manifest), Path::new(binary), args)
         }
         [group, action] if group == "engine" && action == "stop" => engine_stop(),
-        [group, action, config, strategy]
-            if group == "session" && action == "start" =>
-        {
+        [group, action, config, strategy] if group == "session" && action == "start" => {
             session_start(Path::new(config), Path::new(strategy))
         }
         [group, action] if group == "session" && action == "stop" => session_stop(),
@@ -398,7 +396,6 @@ fn config_verify(path: &Path) -> i32 {
     println!("strategy: {}", config.strategy.name);
     verify_paths(&resolved.manifest, &resolved.binary)
 }
-
 
 fn session_start(config: &Path, strategy: &Path) -> i32 {
     let spec = SessionSpec {
