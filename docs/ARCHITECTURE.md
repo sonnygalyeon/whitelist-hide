@@ -49,21 +49,24 @@ The Flowseal Windows reference currently launches `winws.exe` with strategy-spec
 
 ### macOS
 
-Current foundation:
+Current implementation:
 
 - read-only inspection of default route, pf, utun interfaces, keepinit and privilege state;
-- dedicated pf anchor name `com.whitelisthide`;
-- explicit start/stop/cleanup action plans;
-- executable cleanup limited to flushing the project-owned pf anchor;
-- no global pf disable/reset;
-- start remains disabled until engine ownership and utun lifecycle tracking exist.
+- dedicated PF anchor `com.apple/whitelist-hide`, beneath macOS's loaded `com.apple/*` anchor tree;
+- SHA-256/platform verification before engine launch;
+- exact engine PID and binary path recorded in the runtime journal;
+- dynamically selected project-owned utun unit;
+- gateway MAC discovery before BPF reinjection;
+- structured strategy compilation into engine arguments and PF port rules;
+- transactional start rollback for PF rules, engine process and PF enable token;
+- stop refuses to kill a PID if it no longer belongs to the recorded engine binary;
+- no global PF disable/reset and no process-name-wide kill.
 
-Next macOS implementation:
+Remaining macOS work before v1.0:
 
-- verified engine launch;
-- project-owned utun transport;
-- transactional state capture and rollback;
-- launchd/helper integration for privileged mutations.
+- privileged helper/LaunchDaemon IPC so the GUI itself stays unprivileged;
+- root-level integration tests for repeated start/stop/failure recovery;
+- richer multi-profile strategy parity and IPv6 gateway handling.
 
 ### Linux
 
@@ -135,10 +138,12 @@ Stop/uninstall use the recorded state rather than broad networking reset command
 2. Configuration schema + validation. Done.
 3. Artifact manifest + SHA-256 verification. Done.
 4. Application service boundary + macOS inspection/planning foundation. Done in this stage.
-5. Verified macOS engine + utun lifecycle.
-6. Windows backend prototype.
-7. Linux backend prototype.
-8. Strategy compiler.
-9. Automated connectivity/rollback tests.
-10. Tauri desktop UI and signed packaging.
-11. Mobile backend investigation.
+5. Verified macOS engine + utun lifecycle. Implemented, integration testing pending.
+6. Windows backend prototype. Diagnostics/plans implemented.
+7. Linux backend prototype. Diagnostics/plans implemented.
+8. Strategy compiler. Initial typed compiler implemented.
+9. Managed Linux lifecycle.
+10. Managed Windows/WinDivert lifecycle.
+11. Automated connectivity/rollback tests.
+12. Tauri desktop UI, privileged helpers and signed packaging.
+13. Mobile backend investigation.
