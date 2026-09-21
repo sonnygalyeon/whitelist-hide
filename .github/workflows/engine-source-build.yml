@@ -1,7 +1,6 @@
 name: engine-source-build
 
 on:
-  workflow_call:
   workflow_dispatch:
   push:
     tags:
