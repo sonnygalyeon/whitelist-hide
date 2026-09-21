@@ -1,12 +1,12 @@
 use std::env;
 use std::path::{Path, PathBuf};
 
+use whitelist_hide_controller::SessionController;
 use whitelist_hide_core::artifact::{ArtifactManifest, VerificationReport, verify_file};
 use whitelist_hide_core::config::AppConfig;
 use whitelist_hide_core::strategy::StrategyDefinition;
 use whitelist_hide_core::strategy_compile::{EngineFlavor, compile_strategy};
 use whitelist_hide_core::{DoctorReport, Platform};
-use whitelist_hide_controller::SessionController;
 use whitelist_hide_linux::LinuxBackend;
 use whitelist_hide_macos::MacOsBackend;
 use whitelist_hide_runtime::{StateStore, launch_verified_engine, stop_recorded_engine};
@@ -107,7 +107,6 @@ fn main() {
 
     std::process::exit(exit_code);
 }
-
 
 fn session_start(config: &Path, strategy: &Path) -> i32 {
     let controller = SessionController::new(runtime_state_path());
