@@ -4,7 +4,8 @@ on:
   workflow_dispatch:
   push:
     branches:
-      - feature/release-candidate
+      - feature/usable-desktop-v1
+      - ver1.0
     tags:
       - "v*"
 
@@ -16,17 +17,24 @@ permissions:
   contents: read
 
 jobs:
+  engines:
+    uses: ./.github/workflows/engine-source-build.yml
+
   bundle:
+    needs: engines
     strategy:
       fail-fast: false
       matrix:
         include:
           - os: ubuntu-24.04
             name: linux
+            engine_artifact: source-built-linux-nfqws
           - os: macos-latest
             name: macos
+            engine_artifact: source-built-macos-utunws
           - os: windows-latest
             name: windows
+            engine_artifact: source-built-windows-winws2
     runs-on: ${{ matrix.os }}
 
     steps:
@@ -45,6 +53,40 @@ jobs:
       - name: Install frontend dependencies
         working-directory: apps/desktop
         run: npm ci
+
+      - name: Download verified source-built engine bundle
+        uses: actions/download-artifact@v4
+        with:
+          name: ${{ matrix.engine_artifact }}
+          path: dist/engine
+
+      - name: Resolve build target on Unix
+        if: runner.os != 'Windows'
+        shell: bash
+        run: echo "TARGET_TRIPLE=$(rustc -vV | sed -n 's/^host: //p')" >> "$GITHUB_ENV"
+
+      - name: Resolve build target on Windows
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $target = (rustc -vV | Select-String '^host: ').Line.Substring(6)
+          "TARGET_TRIPLE=$target" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
+      - name: Stage zero-config runtime resources
+        run: >-
+          python scripts/stage_desktop_runtime.py
+          --platform "${{ matrix.name }}"
+          --target "$env:TARGET_TRIPLE"
+          --input dist/engine
+          --output apps/desktop/src-tauri/resources/whitelist-hide/generated
+        if: runner.os == 'Windows'
+        shell: pwsh
+
+      - name: Stage zero-config runtime resources on Unix
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          python3 scripts/stage_desktop_runtime.py             --platform "${{ matrix.name }}"             --target "$TARGET_TRIPLE"             --input dist/engine             --output apps/desktop/src-tauri/resources/whitelist-hide/generated
 
       - name: Generate platform icons
         working-directory: apps/desktop

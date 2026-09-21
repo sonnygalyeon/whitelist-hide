@@ -1,9 +1,23 @@
+use std::path::PathBuf;
+
+use serde::Serialize;
+use tauri::Manager;
 use tauri_plugin_shell::ShellExt;
 use whitelist_hide_core::Platform;
 use whitelist_hide_linux::LinuxBackend;
 use whitelist_hide_macos::MacOsBackend;
 use whitelist_hide_service::{AppService, BackendStatus};
 use whitelist_hide_windows::WindowsBackend;
+
+#[derive(Debug, Clone, Serialize)]
+struct ProfileInfo {
+    id: &'static str,
+    name: &'static str,
+    platform: String,
+    available: bool,
+    config_path: String,
+    strategy_path: String,
+}
 
 #[tauri::command]
 fn app_version() -> &'static str {
@@ -27,14 +41,35 @@ fn backend_status() -> Result<BackendStatus, String> {
 }
 
 #[tauri::command]
-async fn session_start(
-    app: tauri::AppHandle,
-    config: String,
-    strategy: String,
-) -> Result<String, String> {
+fn default_profile(app: tauri::AppHandle) -> Result<ProfileInfo, String> {
+    let (config, strategy) = bundled_profile_paths(&app)?;
+    Ok(ProfileInfo {
+        id: "standard",
+        name: "Standard",
+        platform: Platform::detect().backend_name().to_owned(),
+        available: config.is_file() && strategy.is_file(),
+        config_path: config.display().to_string(),
+        strategy_path: strategy.display().to_string(),
+    })
+}
+
+#[tauri::command]
+async fn session_start_default(app: tauri::AppHandle) -> Result<String, String> {
+    let (config, strategy) = bundled_profile_paths(&app)?;
+    if !config.is_file() || !strategy.is_file() {
+        return Err(
+            "Встроенный профиль не найден. Переустановите приложение из полного desktop-пакета."
+                .to_owned(),
+        );
+    }
+
     invoke_helper(
         &app,
-        vec!["start".to_owned(), config, strategy],
+        vec![
+            "start".to_owned(),
+            config.display().to_string(),
+            strategy.display().to_string(),
+        ],
         false,
     )
     .await
@@ -50,6 +85,18 @@ async fn session_health(app: tauri::AppHandle) -> Result<String, String> {
     invoke_helper(&app, vec!["health".to_owned()], true).await
 }
 
+fn bundled_profile_paths(app: &tauri::AppHandle) -> Result<(PathBuf, PathBuf), String> {
+    let resource_dir = app
+        .path()
+        .resource_dir()
+        .map_err(|error| format!("не удалось определить каталог ресурсов: {error}"))?;
+    let root = resource_dir.join("whitelist-hide");
+    Ok((
+        root.join("default").join("config.toml"),
+        root.join("default").join("strategy.toml"),
+    ))
+}
+
 async fn invoke_helper(
     app: &tauri::AppHandle,
     args: Vec<String>,
@@ -58,13 +105,13 @@ async fn invoke_helper(
     let command = app
         .shell()
         .sidecar("whitelist-hide-helper")
-        .map_err(|error| format!("failed to resolve bundled privileged helper: {error}"))?
+        .map_err(|error| format!("не удалось найти системный helper: {error}"))?
         .args(args);
 
     let output = command
         .output()
         .await
-        .map_err(|error| format!("failed to execute bundled privileged helper: {error}"))?;
+        .map_err(|error| format!("не удалось запустить системный helper: {error}"))?;
 
     let stdout = String::from_utf8_lossy(&output.stdout).trim().to_owned();
     let stderr = String::from_utf8_lossy(&output.stderr).trim().to_owned();
@@ -78,7 +125,7 @@ async fn invoke_helper(
     } else {
         let detail = if stderr.is_empty() { stdout } else { stderr };
         Err(format!(
-            "privileged helper failed with status {:?}: {detail}",
+            "системный helper завершился с кодом {:?}: {detail}",
             output.status.code()
         ))
     }
@@ -91,7 +138,8 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             app_version,
             backend_status,
-            session_start,
+            default_profile,
+            session_start_default,
             session_stop,
             session_health
         ])

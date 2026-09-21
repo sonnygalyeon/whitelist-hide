@@ -14,15 +14,15 @@
       {
         "label": "main",
         "title": "whitelist-hide",
-        "width": 900,
-        "height": 640,
+        "width": 960,
+        "height": 720,
+        "minWidth": 760,
+        "minHeight": 600,
         "resizable": true
       }
     ],
     "security": {
-      "capabilities": [
-        "main"
-      ]
+      "capabilities": ["main"]
     }
   },
   "bundle": {
@@ -31,6 +31,9 @@
     "externalBin": [
       "binaries/whitelist-hide-helper"
     ],
+    "resources": {
+      "resources/whitelist-hide/generated/": "whitelist-hide/"
+    },
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",

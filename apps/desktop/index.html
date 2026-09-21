@@ -3,46 +3,73 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="color-scheme" content="dark light" />
     <title>whitelist-hide</title>
   </head>
   <body>
-    <main>
-      <header>
-        <h1>whitelist-hide</h1>
-        <p>Единый Rust lifecycle для CLI и desktop.</p>
+    <main class="shell">
+      <header class="topbar">
+        <div>
+          <p class="eyebrow">whitelist-hide</p>
+          <h1>Защита соединения</h1>
+        </div>
+        <span id="version" class="version"></span>
       </header>
 
-      <section>
-        <h2>Сессия</h2>
-        <label>
-          Config
-          <input id="config" type="text" placeholder="/path/to/config.toml" />
-        </label>
-        <label>
-          Strategy
-          <input id="strategy" type="text" placeholder="/path/to/strategy.toml" />
-        </label>
-        <div>
-          <button id="start" type="button">Start</button>
-          <button id="stop" type="button">Stop</button>
-          <button id="health" type="button">Health</button>
+      <section class="hero card">
+        <div class="status-orb" id="status-orb" aria-hidden="true"></div>
+        <div class="hero-copy">
+          <p id="state-caption" class="muted">Проверяем состояние…</p>
+          <h2 id="state">Загрузка</h2>
+          <p id="state-detail" class="muted">
+            Приложение проверяет движок и сетевой backend.
+          </p>
         </div>
-        <pre id="session-output"></pre>
+        <button id="toggle" class="primary" type="button" disabled>
+          Подождите…
+        </button>
       </section>
 
-      <section>
-        <button id="refresh" type="button">Обновить диагностику</button>
-        <span id="state">Загрузка…</span>
+      <section class="grid">
+        <article class="card">
+          <div class="section-heading">
+            <div>
+              <p class="eyebrow">Профиль</p>
+              <h3 id="profile-name">Standard</h3>
+            </div>
+            <span id="profile-state" class="pill">Проверка</span>
+          </div>
+          <p class="muted">
+            Встроенный сбалансированный профиль. Ручная настройка файлов не требуется.
+          </p>
+          <dl class="facts">
+            <div><dt>Платформа</dt><dd id="platform">—</dd></div>
+            <div><dt>Runtime</dt><dd id="runtime-state">—</dd></div>
+          </dl>
+        </article>
+
+        <article class="card">
+          <div class="section-heading">
+            <div>
+              <p class="eyebrow">Состояние</p>
+              <h3>Диагностика</h3>
+            </div>
+            <button id="refresh" class="ghost" type="button">Обновить</button>
+          </div>
+          <div id="diagnostics" class="diagnostics"></div>
+        </article>
       </section>
 
-      <section>
-        <h2>Диагностика</h2>
-        <div id="diagnostics"></div>
+      <section class="card">
+        <div class="section-heading">
+          <div>
+            <p class="eyebrow">События</p>
+            <h3>Журнал</h3>
+          </div>
+          <button id="health" class="ghost" type="button">Проверить</button>
+        </div>
+        <div id="activity" class="activity" aria-live="polite"></div>
       </section>
-
-      <footer>
-        <small id="version"></small>
-      </footer>
     </main>
     <script type="module" src="/src/main.js"></script>
   </body>
