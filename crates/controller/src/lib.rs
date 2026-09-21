@@ -211,7 +211,7 @@ impl SessionController {
                     .output()
                     .is_ok_and(|output| output.status.success());
                 utun && owned_pf_anchor_has_rules().unwrap_or(false)
-            },
+            }
             Platform::Windows => windivert_service_running().unwrap_or(false),
             Platform::Unsupported => false,
         };
