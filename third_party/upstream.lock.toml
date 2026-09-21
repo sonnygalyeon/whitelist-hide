@@ -9,6 +9,7 @@ build_target = "mac"
 license = "MIT"
 license_path = "LICENSE"
 status = "source-build-enabled"
+expected_sha256 = "bbf125e40feedbf5cbb5e7b93c62f5647f1da6d6ecb646206c661b7788b4344c"
 
 [linux]
 repository = "https://github.com/bol-van/zapret.git"
@@ -19,6 +20,7 @@ build_target = "default"
 license = "MIT"
 license_path = "docs/LICENSE.txt"
 status = "source-build-enabled"
+expected_sha256 = "b83836cd66db3470d6d2a1c14ecea2576925e14ab873d2686318125d505ecb30"
 
 [windows]
 repository = "https://github.com/bol-van/zapret.git"
@@ -34,3 +36,5 @@ windivert_url = "https://github.com/basil00/WinDivert/releases/download/v2.2.2/W
 windivert_archive_sha256 = "63cb41763bb4b20f600b6de04e991a9c2be73279e317d4d82f237b150c5f3f15"
 windivert_dll_sha256 = "c1e060ee19444a259b2162f8af0f3fe8c4428a1c6f694dce20de194ac8d7d9a2"
 windivert_sys_sha256 = "8da085332782708d8767bcace5327a6ec7283c17cfb85e40b03cd2323a90ddc2"
+winws_sha256 = "c80191fa814aafea7e6ef9b7d72e21603c0f7e668b5c066f78ef0f8eea7e083c"
+cygwin1_sha256 = "d66788fce4ef1ce787fc1a83f2dd1e063e58bbf0d48ad93164ee195a983c035e"
