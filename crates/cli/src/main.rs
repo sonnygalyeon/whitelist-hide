@@ -394,7 +394,20 @@ fn config_verify(path: &Path) -> i32 {
     let resolved = config.resolve_engine_paths(path);
     println!("config: OK");
     println!("strategy: {}", config.strategy.name);
-    verify_paths(&resolved.manifest, &resolved.binary)
+    let main_code = verify_paths(&resolved.manifest, &resolved.binary);
+    if main_code != 0 {
+        return main_code;
+    }
+
+    for dependency in &resolved.dependencies {
+        println!("dependency: {}", dependency.binary.display());
+        let code = verify_paths(&dependency.manifest, &dependency.binary);
+        if code != 0 {
+            return code;
+        }
+    }
+
+    0
 }
 
 fn session_start(config: &Path, strategy: &Path) -> i32 {
