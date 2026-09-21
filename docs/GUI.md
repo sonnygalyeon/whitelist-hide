@@ -27,7 +27,7 @@ Tauri Rust process (unprivileged by design)
       macOS   Linux   Windows
 ```
 
-The UI does not receive a generic command executor. It cannot submit an arbitrary shell command to the helper.
+The UI does not receive a generic command executor. It cannot submit an arbitrary shell command to the helper. The Rust host resolves the packaged helper through Tauri's sidecar API, so bundle layout is not guessed from the GUI executable path.
 
 ## Helper protocol
 
@@ -40,7 +40,7 @@ health
 watchdog   # internal child operation
 ```
 
-Configuration and strategy paths are passed as process arguments, not interpolated into a privileged shell string.
+Configuration and strategy paths are passed as sidecar arguments, not interpolated into a privileged shell string. The WebView capability intentionally grants no shell execute/spawn permission.
 
 ## Privilege elevation
 
