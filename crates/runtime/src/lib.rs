@@ -247,6 +247,24 @@ pub fn launch_verified_engine(
     store: &StateStore,
     session_id: &str,
 ) -> Result<EngineLaunchReport, EngineRuntimeError> {
+    launch_verified_engine_with_env(
+        manifest_path,
+        binary_path,
+        args,
+        &[],
+        store,
+        session_id,
+    )
+}
+
+pub fn launch_verified_engine_with_env(
+    manifest_path: &Path,
+    binary_path: &Path,
+    args: &[String],
+    env: &[(String, String)],
+    store: &StateStore,
+    session_id: &str,
+) -> Result<EngineLaunchReport, EngineRuntimeError> {
     if let Some(existing) = store.load()? {
         if existing.engine_pid.is_some()
             && matches!(
@@ -293,13 +311,15 @@ pub fn launch_verified_engine(
     state.engine_binary = Some(binary.clone());
     store.save(&state)?;
 
-    let mut child = match Command::new(&binary)
+    let mut command = Command::new(&binary);
+    command
         .args(args)
+        .envs(env.iter().map(|(key, value)| (key, value)))
         .stdin(Stdio::null())
         .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .spawn()
-    {
+        .stderr(Stdio::null());
+
+    let mut child = match command.spawn() {
         Ok(child) => child,
         Err(source) => {
             state.phase = RuntimePhase::Failed;
