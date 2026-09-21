@@ -71,6 +71,19 @@ def main() -> int:
         f"status={target['status']}",
     ]
 
+    if args.target == "windows":
+        for key in (
+            "windivert_version",
+            "windivert_url",
+            "windivert_archive_sha256",
+            "windivert_dll_sha256",
+            "windivert_sys_sha256",
+        ):
+            value = target.get(key)
+            if not isinstance(value, str) or not value:
+                raise SystemExit(f"windows.{key} is missing or invalid")
+            lines.append(f"{key}={value}")
+
     if args.github_output:
         pathlib.Path(args.github_output).write_text("\n".join(lines) + "\n", encoding="utf-8")
     else:
