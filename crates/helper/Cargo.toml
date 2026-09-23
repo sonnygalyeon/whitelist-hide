@@ -9,6 +9,7 @@ name = "whitelist-hide-helper"
 path = "src/main.rs"
 
 [dependencies]
+fs2 = "0.4"
 whitelist-hide-controller = { path = "../controller" }
 
 [lints]

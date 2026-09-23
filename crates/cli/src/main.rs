@@ -614,16 +614,7 @@ fn config_path() -> PathBuf {
 }
 
 fn runtime_state_path() -> PathBuf {
-    match Platform::detect() {
-        Platform::Windows => env::var_os("PROGRAMDATA")
-            .map(PathBuf::from)
-            .unwrap_or_else(|| PathBuf::from("."))
-            .join("whitelist-hide")
-            .join("runtime-state.json"),
-        Platform::MacOS => PathBuf::from("/var/run/whitelist-hide/runtime-state.json"),
-        Platform::Linux => PathBuf::from("/run/whitelist-hide/runtime-state.json"),
-        Platform::Unsupported => PathBuf::from("runtime-state.json"),
-    }
+    whitelist_hide_controller::default_state_path()
 }
 
 fn help() {

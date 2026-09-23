@@ -1,76 +1,49 @@
 <!doctype html>
 <html lang="ru">
-  <head>
-    <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <meta name="color-scheme" content="dark light" />
-    <title>whitelist-hide</title>
-  </head>
-  <body>
-    <main class="shell">
-      <header class="topbar">
-        <div>
-          <p class="eyebrow">whitelist-hide</p>
-          <h1>Защита соединения</h1>
-        </div>
-        <span id="version" class="version"></span>
-      </header>
-
-      <section class="hero card">
-        <div class="status-orb" id="status-orb" aria-hidden="true"></div>
-        <div class="hero-copy">
-          <p id="state-caption" class="muted">Проверяем состояние…</p>
-          <h2 id="state">Загрузка</h2>
-          <p id="state-detail" class="muted">
-            Приложение проверяет движок и сетевой backend.
-          </p>
-        </div>
-        <button id="toggle" class="primary" type="button" disabled>
-          Подождите…
-        </button>
-      </section>
-
-      <section class="grid">
-        <article class="card">
-          <div class="section-heading">
-            <div>
-              <p class="eyebrow">Профиль</p>
-              <h3 id="profile-name">Standard</h3>
-            </div>
-            <span id="profile-state" class="pill">Проверка</span>
-          </div>
-          <p class="muted">
-            Встроенный сбалансированный профиль. Ручная настройка файлов не требуется.
-          </p>
-          <dl class="facts">
-            <div><dt>Платформа</dt><dd id="platform">—</dd></div>
-            <div><dt>Runtime</dt><dd id="runtime-state">—</dd></div>
-          </dl>
-        </article>
-
-        <article class="card">
-          <div class="section-heading">
-            <div>
-              <p class="eyebrow">Состояние</p>
-              <h3>Диагностика</h3>
-            </div>
-            <button id="refresh" class="ghost" type="button">Обновить</button>
-          </div>
-          <div id="diagnostics" class="diagnostics"></div>
-        </article>
-      </section>
-
-      <section class="card">
-        <div class="section-heading">
-          <div>
-            <p class="eyebrow">События</p>
-            <h3>Журнал</h3>
-          </div>
-          <button id="health" class="ghost" type="button">Проверить</button>
-        </div>
-        <div id="activity" class="activity" aria-live="polite"></div>
-      </section>
-    </main>
-    <script type="module" src="/src/main.js"></script>
-  </body>
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="color-scheme" content="dark" />
+  <title>whitelist-hide</title>
+</head>
+<body>
+  <main class="shell">
+    <header class="topbar">
+      <div class="brand"><span class="brand-mark" aria-hidden="true">w<span>.</span></span><div><strong>whitelist-hide</strong><p>Управление соединением</p></div></div>
+      <div class="top-meta"><span class="pill" id="platform">Desktop</span><span id="version">…</span></div>
+    </header>
+    <section class="hero card" aria-labelledby="state">
+      <div class="hero-top"><span class="eyebrow">СЕТЕВОЙ ФИЛЬТР</span><span class="indicator" id="state-caption" role="status">Проверка состояния</span></div>
+      <div class="hero-main">
+        <div class="status-orb" id="status-orb" data-state="stopped" aria-hidden="true"><svg viewBox="0 0 48 48"><path d="M24 7v18M13 13a17 17 0 1 0 22 0"/></svg></div>
+        <div class="hero-copy"><h1 id="state">Загрузка</h1><p id="state-detail">Проверяем компоненты и состояние сессии.</p></div>
+        <button id="toggle" class="primary" type="button" disabled>Подождите…</button>
+      </div>
+      <div class="hero-footer"><span><i class="small-dot"></i> Локальная обработка трафика</span><span>Без VPN-сервера · Без телеметрии</span></div>
+    </section>
+    <section class="grid">
+      <article class="card" aria-labelledby="profile-heading">
+        <div class="section-heading"><h2 id="profile-heading">Профиль подключения</h2><span id="profile-state" class="pill">Проверка</span></div>
+        <label for="profile" class="field-label">Стратегия</label>
+        <select id="profile" disabled><option value="standard">Стандартный</option><option value="split">Разделение пакетов</option><option value="disorder">Изменение порядка</option></select>
+        <p class="muted profile-description" id="profile-description">Базовая обработка HTTPS, QUIC и голосового трафика Discord.</p>
+        <p class="hint">Если сервис недоступен, отключите фильтр и попробуйте другой профиль.</p>
+        <dl class="facts"><div><dt>Компоненты</dt><dd id="runtime-state">Проверяем…</dd></div><div><dt>Проверка сессии</dt><dd>Каждые 5 секунд</dd></div></dl>
+      </article>
+      <article class="card" aria-labelledby="diagnostic-heading">
+        <div class="section-heading"><h2 id="diagnostic-heading">Диагностика</h2><button id="refresh" class="ghost" type="button">Проверить</button></div>
+        <div id="diagnostics" class="diagnostics"></div>
+        <div class="recovery"><p class="hint">Сессия завершилась с ошибкой?</p><button id="recover" class="ghost" type="button" disabled>Остановить и восстановить сеть</button></div>
+      </article>
+    </section>
+    <section class="card journal" aria-labelledby="journal-heading">
+      <div class="section-heading"><div><span class="eyebrow">НА ЭТОМ УСТРОЙСТВЕ</span><h2 id="journal-heading">Журнал событий</h2></div><div class="actions"><button id="show-logs" class="ghost" type="button">Лог движка</button><button id="export" class="ghost" type="button">Сохранить отчёт</button></div></div>
+      <div id="activity" class="activity" role="log" aria-live="polite"></div>
+      <pre id="engine-log" hidden></pre>
+    </section>
+    <footer class="footer">Фильтрация не меняет IP-адрес и не добавляет шифрование. Доступность сервисов зависит от сети.</footer>
+  </main>
+  <dialog id="exit-dialog"><h2>Закрыть приложение?</h2><p>Активная сессия будет остановлена. Для этого может потребоваться подтверждение администратора.</p><div class="actions"><button id="exit-cancel" class="ghost">Остаться</button><button id="exit-confirm" class="primary">Остановить и выйти</button></div></dialog>
+  <script type="module" src="/src/main.js"></script>
+</body>
 </html>

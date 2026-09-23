@@ -1,210 +1,161 @@
-import { invoke } from "@tauri-apps/api/core";
-import "./style.css";
+import { invoke, isTauri } from '@tauri-apps/api/core';
+import { listen } from '@tauri-apps/api/event';
+import { parseHealth, friendlyError } from './state.js';
+import './style.css';
 
-const ui = {
-  state: document.querySelector("#state"),
-  stateCaption: document.querySelector("#state-caption"),
-  stateDetail: document.querySelector("#state-detail"),
-  orb: document.querySelector("#status-orb"),
-  toggle: document.querySelector("#toggle"),
-  diagnostics: document.querySelector("#diagnostics"),
-  refresh: document.querySelector("#refresh"),
-  health: document.querySelector("#health"),
-  activity: document.querySelector("#activity"),
-  version: document.querySelector("#version"),
-  profileName: document.querySelector("#profile-name"),
-  profileState: document.querySelector("#profile-state"),
-  platform: document.querySelector("#platform"),
-  runtimeState: document.querySelector("#runtime-state"),
+const $ = id => document.getElementById(id);
+const descriptions = {
+  standard: 'Базовая обработка HTTPS, QUIC и голосового трафика Discord.',
+  split: 'Разделение TCP-пакетов; отдельная обработка QUIC и голосового трафика.',
+  disorder: 'Изменение порядка частей TCP-пакета; отдельная обработка UDP.',
 };
-
-let running = false;
 let busy = false;
-let profileAvailable = false;
+let refreshing = false;
+let available = false;
+let health = { running: false, session: false, engine: false, network: false };
+let known = false;
+let native = isTauri();
+let errorSticky = false;
+let timer;
 
-
-function friendlyError(error) {
-  const raw = String(error ?? "Неизвестная ошибка");
-  const text = raw.toLowerCase();
-
-  if (text.includes("pkexec") || text.includes("authorization") || text.includes("administrator") ||
-      text.includes("uac") || text.includes("отмен") || text.includes("canceled") ||
-      text.includes("cancelled") || text.includes("1223")) {
-    return "Не удалось получить права администратора. Подтвердите системный запрос и повторите попытку.";
-  }
-  if (text.includes("sha256") || text.includes("untrusted artifact") ||
-      text.includes("artifact error") || text.includes("integrity")) {
-    return "Проверка целостности встроенного runtime не пройдена. Переустановите приложение из официального пакета.";
-  }
-  if (text.includes("windivert") || text.includes("driver")) {
-    return "Не удалось запустить сетевой драйвер WinDivert. Перезапустите приложение и подтвердите запрос администратора.";
-  }
-  if (text.includes("nft") || text.includes("nfqueue")) {
-    return "Не удалось настроить Linux packet filter. Проверьте наличие nftables и права администратора.";
-  }
-  if (text.includes("pfctl") || text.includes("packet filter") || text.includes("utun")) {
-    return "Не удалось настроить сетевой фильтр macOS. Сетевые изменения были откатаны.";
-  }
-  if (text.includes("runtime state already exists") || text.includes("already active")) {
-    return "Сессия уже запущена или не была корректно завершена. Нажмите «Проверить» и затем повторите операцию.";
-  }
-  if (text.includes("встроенный профиль") || text.includes("runtime не найден") ||
-      text.includes("no such file") || text.includes("not found")) {
-    return "Встроенные файлы приложения не найдены. Переустановите полный desktop-пакет.";
-  }
-  return raw;
-}
-
-function addEvent(message, tone = "info") {
-  const row = document.createElement("div");
+function event(message, tone = 'info') {
+  const row = document.createElement('div');
   row.className = `event event-${tone}`;
-  const time = new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
-  row.innerHTML = `<span class="event-time">${time}</span><span></span>`;
-  row.lastElementChild.textContent = message;
-  ui.activity.prepend(row);
-  while (ui.activity.children.length > 20) {
-    ui.activity.lastElementChild.remove();
+  const time = document.createElement('span');
+  time.className = 'event-time';
+  time.textContent = new Date().toLocaleTimeString('ru', { hour: '2-digit', minute: '2-digit' });
+  const text = document.createElement('span');
+  text.textContent = message;
+  row.append(time, text);
+  $('activity').prepend(row);
+  while ($('activity').children.length > 100) $('activity').lastElementChild.remove();
+}
+function visual(kind, title, detail) {
+  $('status-orb').dataset.state = kind;
+  $('state').textContent = title;
+  $('state-detail').textContent = detail;
+  $('state-caption').textContent = { running: 'Сессия активна', error: 'Требуется внимание', busy: 'Выполняется операция', stopped: 'Сессия не активна' }[kind];
+}
+function controls() {
+  $('toggle').disabled = !native || busy || refreshing || !known || (!health.session && !available);
+  $('toggle').textContent = busy ? 'Подождите…' : health.session ? 'Отключить' : 'Включить';
+  $('toggle').classList.toggle('danger', health.session);
+  $('profile').disabled = busy || !known || health.session || !available;
+  $('refresh').disabled = !native || busy || refreshing;
+  $('recover').disabled = !native || busy || refreshing;
+  $('export').disabled = !native || busy;
+  $('show-logs').disabled = !native || busy;
+}
+function diagnostics() {
+  $('diagnostics').replaceChildren();
+  const items = [
+    ['Компоненты приложения', available ? 'Встроенный профиль найден' : 'Не установлен полный пакет', available],
+    ['Сетевой движок', known ? (health.engine ? 'Процесс работает' : 'Остановлен') : 'Состояние неизвестно', known && health.engine],
+    ['Сетевой фильтр', known ? (health.network ? 'Ресурс активен' : 'Не активен') : 'Состояние неизвестно', known && health.network],
+    ['Контроль сессии', health.stale ? 'Нет свежего ответа watchdog' : known ? 'Проверка завершена' : 'Проверка недоступна', known && !health.stale],
+  ];
+  for (const [label, value, ok] of items) {
+    const row = document.createElement('div'); row.className = 'diagnostic';
+    const dot = document.createElement('span'); dot.className = `dot dot-${ok ? 'ok' : 'warning'}`;
+    const copy = document.createElement('div');
+    const title = document.createElement('strong'); title.textContent = label;
+    const detail = document.createElement('span'); detail.className = 'value'; detail.textContent = value;
+    copy.append(title, detail); row.append(dot, copy); $('diagnostics').append(row);
   }
 }
-
-function setVisualState(kind, title, detail) {
-  ui.orb.dataset.state = kind;
-  ui.state.textContent = title;
-  ui.stateDetail.textContent = detail;
-  ui.stateCaption.textContent =
-    kind === "running" ? "Соединение защищено" :
-    kind === "error" ? "Требуется внимание" :
-    kind === "busy" ? "Выполняется операция" :
-    "Защита выключена";
-}
-
-function updateToggle() {
-  ui.toggle.disabled = busy || !profileAvailable;
-  ui.toggle.textContent = busy ? "Выполняется…" : running ? "Отключить" : "Включить";
-  ui.toggle.classList.toggle("danger", running);
-}
-
-function renderDiagnostics(status) {
-  ui.diagnostics.replaceChildren();
-  for (const item of status.diagnostics ?? []) {
-    const row = document.createElement("div");
-    row.className = "diagnostic";
-    const dot = document.createElement("span");
-    dot.className = `dot dot-${item.level}`;
-    const copy = document.createElement("div");
-    const label = document.createElement("strong");
-    label.textContent = item.label;
-    const value = document.createElement("span");
-    value.textContent = item.value;
-    copy.append(label, value);
-    if (item.detail) row.title = item.detail;
-    row.append(dot, copy);
-    ui.diagnostics.append(row);
-  }
-  if (!ui.diagnostics.children.length) {
-    ui.diagnostics.textContent = "Диагностические данные пока отсутствуют.";
-  }
-}
-
-function parseHealth(text) {
-  const values = Object.fromEntries(
-    String(text)
-      .split(/\r?\n/)
-      .map((line) => line.split("=", 2))
-      .filter((pair) => pair.length === 2),
-  );
-  return {
-    running: values.running === "true",
-    engine: values.engine_alive === "true",
-    network: values.network_resource === "true",
-  };
-}
-
-async function loadProfile() {
-  const profile = await invoke("default_profile");
-  profileAvailable = Boolean(profile.available);
-  ui.profileName.textContent = profile.name;
-  ui.platform.textContent = profile.platform;
-  ui.profileState.textContent = profileAvailable ? "Готов" : "Не установлен";
-  ui.profileState.dataset.state = profileAvailable ? "ok" : "error";
-  ui.runtimeState.textContent = profileAvailable ? "Встроенный runtime найден" : "Runtime отсутствует";
-  if (!profileAvailable) {
-    setVisualState(
-      "error",
-      "Пакет неполный",
-      "Встроенный runtime не найден. Установите полный desktop-пакет.",
-    );
-  }
-  updateToggle();
-}
-
-async function refreshStatus({ log = false } = {}) {
+async function refresh(log = false, force = false) {
+  if (refreshing || (busy && !force)) return;
+  refreshing = true; controls();
   try {
-    const status = await invoke("backend_status");
-    renderDiagnostics(status);
-    const healthText = await invoke("session_health");
-    const health = parseHealth(healthText);
-    running = health.running;
-    if (running) {
-      setVisualState("running", "Включено", "Движок и сетевой маршрут работают.");
-    } else if (profileAvailable) {
-      setVisualState("stopped", "Выключено", "Нажмите «Включить», чтобы применить стандартный профиль.");
+    const previous = health.running;
+    health = parseHealth(await invoke('session_health'));
+    known = true;
+    diagnostics();
+    if (!errorSticky || log || health.running) {
+      if (health.running) visual('running', 'Фильтрация включена', 'Движок работает, системный фильтр активен. Проверьте доступность нужного сервиса.');
+      else if (health.session) visual('error', 'Нужна проверка', 'Сессия не подтверждена. Остановите её кнопкой восстановления и повторите запуск.');
+      else if (available) visual('stopped', 'Готово к подключению', 'Выберите профиль и нажмите «Включить». Система запросит права администратора.');
     }
-    if (log) {
-      addEvent(
-        running ? "Проверка: защита работает." : "Проверка: активной сессии нет.",
-        running ? "ok" : "info",
-      );
-    }
+    if (previous && !health.running) event('Работа сессии прервана. Проверьте журнал движка.', 'error');
+    if (log) event(health.running ? 'Проверка: фильтрация активна.' : health.session ? 'Обнаружена незавершённая сессия.' : 'Проверка: активной сессии нет.');
   } catch (error) {
-    running = false;
-    if (profileAvailable) {
-      setVisualState("error", "Ошибка проверки", friendlyError(error));
-    }
-    if (log) addEvent(`Ошибка проверки: ${friendlyError(error)}`, "error");
-  } finally {
-    updateToggle();
-  }
+    known = false;
+    visual('error', 'Состояние неизвестно', friendlyError(error));
+    diagnostics();
+    if (log) event(friendlyError(error), 'error');
+  } finally { refreshing = false; controls(); }
 }
-
-async function toggleProtection() {
-  if (busy || !profileAvailable) return;
-  busy = true;
-  updateToggle();
-  setVisualState("busy", running ? "Отключение…" : "Запуск…", "Проверяем runtime и применяем сетевые изменения.");
-
+async function operate(stop = false) {
+  if (busy || refreshing || !native) return false;
+  busy = true; errorSticky = false; controls();
+  visual('busy', stop ? 'Остановка…' : 'Подключение…', 'Подтвердите системный запрос администратора, если он появится.');
+  let success = false;
   try {
-    if (running) {
-      await invoke("session_stop");
-      addEvent("Защита отключена, сетевые изменения откатаны.", "info");
-    } else {
-      await invoke("session_start_default");
-      addEvent("Стандартный профиль успешно запущен.", "ok");
-    }
-    await refreshStatus();
+    await invoke(stop ? 'session_stop' : 'session_start_default', stop ? {} : { profile: $('profile').value });
+    await refresh(false, true);
+    if (!known || (!stop && !health.running) || (stop && health.session)) throw new Error('Операция не подтверждена проверкой состояния. Сохраните отчёт и проверьте журнал.');
+    event(stop ? 'Сессия остановлена, её сетевые ресурсы удалены.' : `Включён профиль «${$('profile').selectedOptions[0].text}».`, 'ok');
+    success = true;
   } catch (error) {
-    const message = friendlyError(error);
-    setVisualState("error", "Не удалось выполнить операцию", message);
-    addEvent(message, "error");
-  } finally {
-    busy = false;
-    updateToggle();
+    errorSticky = true;
+    visual('error', 'Операция не завершена', friendlyError(error));
+    event(friendlyError(error), 'error');
+    await refresh(false, true);
+  } finally { busy = false; controls(); }
+  return success;
+}
+$('toggle').addEventListener('click', () => operate(health.session));
+$('recover').addEventListener('click', () => operate(true));
+$('refresh').addEventListener('click', () => { errorSticky = false; refresh(true); });
+$('profile').addEventListener('change', () => {
+  $('profile-description').textContent = descriptions[$('profile').value];
+  try { localStorage.setItem('profile', $('profile').value); } catch { /* optional preference */ }
+});
+$('show-logs').addEventListener('click', async () => {
+  try { $('engine-log').textContent = (await invoke('engine_logs')) || 'Движок ещё не записал сообщения.'; $('engine-log').hidden = false; }
+  catch (error) { event(friendlyError(error), 'error'); }
+});
+$('export').addEventListener('click', async () => {
+  $('export').disabled = true;
+  try { const path = await invoke('export_report', { activity: $('activity').innerText }); event(`Отчёт сохранён: ${path}`, 'ok'); }
+  catch (error) { event(friendlyError(error), 'error'); }
+  finally { controls(); }
+});
+$('exit-cancel').addEventListener('click', () => $('exit-dialog').close());
+$('exit-confirm').addEventListener('click', async () => {
+  $('exit-dialog').close();
+  if (await operate(true)) { clearInterval(timer); await invoke('quit_app'); }
+});
+async function requestClose() {
+  if (busy || refreshing) { event('Дождитесь завершения операции перед выходом.'); return; }
+  await refresh();
+  if (known && !health.session) { clearInterval(timer); await invoke('quit_app'); }
+  else if (!$('exit-dialog').open) $('exit-dialog').showModal();
+}
+
+async function init() {
+  try {
+    const saved = localStorage.getItem('profile');
+    if (saved && descriptions[saved]) { $('profile').value = saved; $('profile-description').textContent = descriptions[saved]; }
+  } catch { /* storage can be disabled */ }
+  if (!native) {
+    visual('stopped', 'Откройте desktop-приложение', 'В браузере доступен только просмотр интерфейса. Для управления сетью установите пакет для своей системы.');
+    $('version').textContent = 'Предпросмотр'; diagnostics(); controls(); return;
   }
+  event('Приложение запущено.');
+  try {
+    $('version').textContent = `v${await invoke('app_version')}`;
+    const profile = await invoke('default_profile');
+    available = profile.available;
+    $('platform').textContent = { linux: 'Linux', windows: 'Windows', macos: 'macOS' }[profile.platform] ?? profile.platform;
+    $('profile-state').textContent = available ? 'Встроенный' : 'Неполный пакет';
+    $('profile-state').dataset.state = available ? 'ok' : 'error';
+    $('runtime-state').textContent = available ? 'Установлены' : 'Не найдены';
+    if (!available) visual('error', 'Пакет неполный', 'Установите полный desktop-пакет со встроенным движком.');
+    await refresh();
+    await listen('close-requested', requestClose);
+    timer = setInterval(() => refresh(), 5000);
+  } catch (error) { visual('error', 'Ошибка инициализации', friendlyError(error)); event(friendlyError(error), 'error'); }
+  controls();
 }
-
-ui.toggle.addEventListener("click", toggleProtection);
-ui.refresh.addEventListener("click", () => refreshStatus({ log: true }));
-ui.health.addEventListener("click", () => refreshStatus({ log: true }));
-
-ui.version.textContent = `v${await invoke("app_version")}`;
-addEvent("Приложение запущено.");
-try {
-  await loadProfile();
-  await refreshStatus();
-} catch (error) {
-  profileAvailable = false;
-  const message = friendlyError(error);
-  setVisualState("error", "Ошибка инициализации", message);
-  addEvent(message, "error");
-  updateToggle();
-}
+await init();

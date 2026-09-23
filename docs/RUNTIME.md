@@ -22,7 +22,7 @@ Examples:
 
 - good: stop PID recorded as the engine PID for the active session;
 - bad: `pkill -9 -x utunws`;
-- good: flush `com.whitelisthide`;
+- good: flush `com.apple/whitelist-hide`;
 - bad: flush all pf rules;
 - good: delete `inet whitelist_hide`;
 - bad: reset the full nftables ruleset.

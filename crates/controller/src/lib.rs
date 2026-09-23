@@ -42,7 +42,7 @@ pub fn default_state_path() -> PathBuf {
     match Platform::detect() {
         Platform::Windows => std::env::var_os("PROGRAMDATA")
             .map(PathBuf::from)
-            .unwrap_or_else(|| PathBuf::from("."))
+            .unwrap_or_else(|| PathBuf::from(r"C:\ProgramData"))
             .join("whitelist-hide")
             .join("runtime-state.json"),
         Platform::MacOS => PathBuf::from("/var/run/whitelist-hide/runtime-state.json"),
@@ -66,6 +66,10 @@ impl SessionController {
     #[must_use]
     pub fn state_path(&self) -> &Path {
         self.state.path()
+    }
+
+    pub fn session_id(&self) -> Result<Option<String>, ControllerError> {
+        Ok(self.state.load()?.map(|state| state.session_id))
     }
 
     pub fn start(
@@ -106,7 +110,14 @@ impl SessionController {
         let compiled = compile_strategy(&strategy, strategy_path, flavor)
             .map_err(|error| ControllerError::Strategy(error.to_string()))?;
 
-        let session_id = format!("session-{}", std::process::id());
+        let session_id = format!(
+            "session-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_nanos()
+        );
         match platform {
             Platform::Linux => self.start_linux(
                 &resolved.manifest,
@@ -139,7 +150,26 @@ impl SessionController {
             ControllerError::Rollback("engine pid missing after start".to_owned())
         })?;
 
-        let health = self.health()?;
+        let mut health = match self.health() {
+            Ok(health) => health,
+            Err(error) => {
+                let _ = self.stop();
+                return Err(error);
+            }
+        };
+        for _ in 0..50 {
+            if health.running || !health.engine_alive {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(100));
+            health = match self.health() {
+                Ok(health) => health,
+                Err(error) => {
+                    let _ = self.stop();
+                    return Err(error);
+                }
+            };
+        }
         if !health.running {
             let _ = self.stop();
             return Err(ControllerError::HealthCheck(
@@ -267,6 +297,16 @@ impl SessionController {
         args: Vec<String>,
         session_id: &str,
     ) -> Result<(), ControllerError> {
+        if owned_pf_anchor_has_rules()?
+            || std::process::Command::new("/sbin/ifconfig")
+                .arg(UTUN_INTERFACE)
+                .output()
+                .is_ok_and(|o| o.status.success())
+        {
+            return Err(ControllerError::HealthCheck(
+                "macOS project interface or anchor is already occupied".to_owned(),
+            ));
+        }
         let snapshot = inspect_network_snapshot()?;
         let options = EngineLaunchOptions {
             args,

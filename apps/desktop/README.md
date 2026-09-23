@@ -1,30 +1,16 @@
-# whitelist-hide desktop
+# Desktop
 
-This directory is reserved for the Tauri 2 desktop application.
+Tauri 2 + Rust + Vite, русский интерфейс в тёмно-зелёной теме.
 
-The desktop UI is intentionally not wired into the root Cargo workspace yet. Native networking and privilege boundaries are still stabilizing, and pulling Tauri/WebView system dependencies into the core CI before that would make backend failures harder to isolate.
+Инструкции установки, запуска и восстановления для Windows/macOS/Linux находятся в [основном README](../../README.md).
 
-The desktop app will consume structured values from `whitelist-hide-service`:
-
-- backend status;
-- diagnostics;
-- action plans;
-- strategy selection;
-- engine trust state;
-- logs/events.
-
-It will not parse CLI text and it will not expose an arbitrary privileged shell command interface.
-
-Planned frontend flow:
-
-```text
-Dashboard
-  -> AppService status
-  -> selected strategy
-  -> Start / Stop
-  -> diagnostics
-  -> logs
-  -> settings
+```bash
+npm ci
+npm test
+npm run dev    # просмотр UI; без управления сетью
+npm run build # frontend
 ```
 
-The visual design will be agreed separately before implementation.
+Полная сборка: [release-desktop.yml](../../.github/workflows/release-desktop.yml). До `npm run tauri:build -- --ci` должны быть подготовлены `src-tauri/binaries/whitelist-hide-helper-<target>` и `src-tauri/resources/whitelist-hide/generated`, включая движок, его зависимости, манифесты и три профиля. Затем `npx tauri icon app-icon.svg` создаёт иконки.
+
+WebView не получает shell/filesystem-доступ. Rust принимает только идентификаторы встроенных профилей. Экспорт отчёта пишет файл с фиксированным префиксом в Downloads.

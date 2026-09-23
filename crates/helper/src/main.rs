@@ -1,4 +1,8 @@
+mod health;
+
+use fs2::FileExt;
 use std::env;
+use std::fs::{self, File, OpenOptions};
 use std::io::{self, Write};
 use std::path::Path;
 use std::process::{Command, Output, Stdio};
@@ -16,13 +20,56 @@ fn main() {
 
     let controller = SessionController::new(default_state_path());
 
+    if args.as_slice() == ["health"] {
+        match health::read(controller.state_path()) {
+            Ok(text) => print!("{text}"),
+            Err(error) => {
+                eprintln!("{error}");
+                std::process::exit(5);
+            }
+        }
+        return;
+    }
+    if args.as_slice() == ["logs"] {
+        match fs::read_to_string(controller.state_path().with_extension("log")) {
+            Ok(text) => print!(
+                "{}",
+                text.lines()
+                    .rev()
+                    .take(150)
+                    .collect::<Vec<_>>()
+                    .into_iter()
+                    .rev()
+                    .collect::<Vec<_>>()
+                    .join("\n")
+            ),
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+            Err(error) => {
+                eprintln!("{error}");
+                std::process::exit(5);
+            }
+        }
+        return;
+    }
+    if let [command, session] = args.as_slice() {
+        if command == "watchdog" && is_elevated() {
+            std::process::exit(watchdog(&controller, session));
+        }
+    }
+    let _lock = match operation_lock(controller.state_path()) {
+        Ok(lock) => lock,
+        Err(error) => {
+            eprintln!("cannot lock runtime: {error}");
+            std::process::exit(5);
+        }
+    };
     let code = match args.as_slice() {
         [command, config, strategy] if command == "start" => {
             match controller.start(Path::new(config), Path::new(strategy)) {
                 Ok(report) => {
                     println!("running");
                     println!("pid={}", report.engine_pid);
-                    match spawn_watchdog() {
+                    match spawn_watchdog(&controller) {
                         Ok(pid) => {
                             println!("watchdog_pid={pid}");
                             0
@@ -42,25 +89,13 @@ fn main() {
         }
         [command] if command == "stop" => match controller.stop() {
             Ok(_) => {
+                let _ = fs::remove_file(controller.state_path().with_extension("health"));
                 println!("stopped");
                 0
             }
             Err(error) => {
                 eprintln!("{error}");
                 5
-            }
-        },
-        [command] if command == "watchdog" => watchdog(&controller),
-        [command] if command == "health" => match controller.health() {
-            Ok(report) => {
-                println!("running={}", report.running);
-                println!("engine_alive={}", report.engine_alive);
-                println!("network_resource={}", report.owned_network_resource_present);
-                if report.running { 0 } else { 6 }
-            }
-            Err(error) => {
-                eprintln!("{error}");
-                6
             }
         },
         _ => {
@@ -220,10 +255,16 @@ fn escape_applescript_string(value: &str) -> String {
     value.replace('\\', "\\\\").replace('"', "\\\"")
 }
 
-fn spawn_watchdog() -> Result<u32, std::io::Error> {
+fn spawn_watchdog(controller: &SessionController) -> Result<u32, std::io::Error> {
+    health::publish(controller).map_err(|e| io::Error::other(e.to_string()))?;
+    let session = controller
+        .session_id()
+        .map_err(|e| io::Error::other(e.to_string()))?
+        .ok_or_else(|| io::Error::other("missing session"))?;
     let executable = env::current_exe()?;
     let child = Command::new(executable)
         .arg("watchdog")
+        .arg(session)
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null())
@@ -231,21 +272,49 @@ fn spawn_watchdog() -> Result<u32, std::io::Error> {
     Ok(child.id())
 }
 
-fn watchdog(controller: &SessionController) -> i32 {
+fn operation_lock(state: &Path) -> io::Result<File> {
+    let parent = state
+        .parent()
+        .ok_or_else(|| io::Error::other("invalid state path"))?;
+    fs::create_dir_all(parent)?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(parent, fs::Permissions::from_mode(0o755))?;
+    }
+    let file = OpenOptions::new()
+        .create(true)
+        .truncate(false)
+        .write(true)
+        .open(state.with_extension("lock"))?;
+    file.lock_exclusive()?;
+    Ok(file)
+}
+
+fn watchdog(controller: &SessionController, session: &str) -> i32 {
     loop {
-        match controller.health() {
-            Ok(report) if report.running => thread::sleep(Duration::from_secs(2)),
-            Ok(report) if !report.engine_alive && !report.owned_network_resource_present => {
+        {
+            let Ok(_lock) = operation_lock(controller.state_path()) else {
+                return 5;
+            };
+            // A watchdog from a previous session must never stop a new session.
+            if controller.session_id().ok().flatten().as_deref() != Some(session) {
                 return 0;
             }
-            Ok(_) => {
-                let _ = controller.stop();
-                return 6;
-            }
-            Err(_) => {
-                let _ = controller.stop();
-                return 6;
+            match controller.health() {
+                Ok(report) if report.running => {
+                    if health::publish(controller).is_err() {
+                        let _ = controller.stop();
+                        return 5;
+                    }
+                }
+                _ => {
+                    let _ = controller.stop();
+                    let _ = fs::remove_file(controller.state_path().with_extension("health"));
+                    return 6;
+                }
             }
         }
+        thread::sleep(Duration::from_secs(2));
     }
 }

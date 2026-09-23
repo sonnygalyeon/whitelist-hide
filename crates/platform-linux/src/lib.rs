@@ -87,7 +87,7 @@ pub fn remove_owned_table() -> Result<bool, LinuxError> {
 
 fn nft_rules(tcp_ports: &[PortRange], udp_ports: &[PortRange], queue: u16) -> String {
     let mut rules = String::from(
-        "table inet whitelist_hide {\n  chain output {\n    type filter hook output priority mangle; policy accept;\n",
+        "table inet whitelist_hide {\n  chain output {\n    type filter hook output priority mangle; policy accept;\n    meta mark & 0x40000000 != 0 return\n",
     );
 
     if !tcp_ports.is_empty() {

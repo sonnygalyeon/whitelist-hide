@@ -94,7 +94,7 @@ impl RuntimeState {
         }
 
         if let Some(scope) = &self.owned_firewall_scope {
-            if !safe_token(scope) {
+            if !safe_token(&scope.replace('/', ".")) {
                 return Err(RuntimeStateError::InvalidState(
                     "owned_firewall_scope contains unsupported characters".to_owned(),
                 ));
@@ -165,6 +165,7 @@ impl StateStore {
             source,
         })?;
 
+        #[cfg(windows)]
         if self.path.exists() {
             fs::remove_file(&self.path).map_err(|source| RuntimeStateError::Io {
                 path: self.path.clone(),
@@ -320,18 +321,34 @@ pub fn launch_verified_engine_with_options(
         });
     }
 
+    validate_environment(&options.env)?;
     let mut state = RuntimeState::new(session_id, verification.actual_platform.clone());
     state.engine_binary = Some(binary.clone());
     store.save(&state)?;
 
-    validate_environment(&options.env)?;
-
+    let log_path = store.path().with_extension("log");
+    let log = fs::File::create(&log_path).map_err(|source| EngineRuntimeError::Io {
+        path: log_path.clone(),
+        source,
+    })?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let _ = fs::set_permissions(&log_path, fs::Permissions::from_mode(0o644));
+    }
+    let stderr = log.try_clone().map_err(|source| EngineRuntimeError::Io {
+        path: log_path,
+        source,
+    })?;
     let mut command = Command::new(&binary);
+    if let Some(directory) = binary.parent() {
+        command.current_dir(directory);
+    }
     command
         .args(&options.args)
         .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null());
+        .stdout(Stdio::from(log))
+        .stderr(Stdio::from(stderr));
 
     for (key, value) in &options.env {
         command.env(key, value);
@@ -340,8 +357,7 @@ pub fn launch_verified_engine_with_options(
     let mut child = match command.spawn() {
         Ok(child) => child,
         Err(source) => {
-            state.phase = RuntimePhase::Failed;
-            let _ = store.save(&state);
+            let _ = store.clear();
             return Err(EngineRuntimeError::Io {
                 path: binary.clone(),
                 source,
@@ -354,8 +370,7 @@ pub fn launch_verified_engine_with_options(
         path: binary.clone(),
         source,
     })? {
-        state.phase = RuntimePhase::Failed;
-        let _ = store.save(&state);
+        let _ = store.clear();
         return Err(EngineRuntimeError::ExitedEarly(status.code()));
     }
 
@@ -364,6 +379,7 @@ pub fn launch_verified_engine_with_options(
 
     if let Err(error) = store.save(&state) {
         let _ = child.kill();
+        let _ = child.wait();
         return Err(EngineRuntimeError::State(error));
     }
 
@@ -426,8 +442,17 @@ pub fn stop_recorded_engine(store: &StateStore) -> Result<bool, EngineRuntimeErr
     state.phase = RuntimePhase::Stopping;
     store.save(&state)?;
     terminate_pid(pid)?;
-    store.clear()?;
-    Ok(true)
+    for _ in 0..30 {
+        if !process_matches(pid, &binary)? {
+            store.clear()?;
+            return Ok(true);
+        }
+        thread::sleep(Duration::from_millis(100));
+    }
+    Err(EngineRuntimeError::TerminateFailed {
+        pid,
+        detail: "process has not exited; ownership retained for retry".to_owned(),
+    })
 }
 
 #[cfg(target_os = "linux")]
@@ -464,34 +489,33 @@ fn process_matches(pid: u32, expected: &Path) -> Result<bool, EngineRuntimeError
     }
 
     let actual = String::from_utf8_lossy(&output.stdout);
-    let actual_name = Path::new(actual.trim()).file_name();
-    Ok(actual_name == expected.file_name())
+    let actual_path = Path::new(actual.trim());
+    Ok(actual_path
+        .canonicalize()
+        .unwrap_or_else(|_| actual_path.to_path_buf())
+        == expected
+            .canonicalize()
+            .unwrap_or_else(|_| expected.to_path_buf()))
 }
 
 #[cfg(target_os = "windows")]
 fn process_matches(pid: u32, expected: &Path) -> Result<bool, EngineRuntimeError> {
-    let filter = format!("PID eq {pid}");
-    let output = Command::new("tasklist")
-        .args(["/FI", &filter, "/FO", "CSV", "/NH"])
-        .output()
-        .map_err(|source| EngineRuntimeError::Io {
-            path: PathBuf::from("tasklist"),
-            source,
-        })?;
-
+    let output = Command::new("powershell.exe")
+        .args(["-NoLogo", "-NoProfile", "-NonInteractive", "-Command",
+            "$p = Get-Process -Id ([int]$env:WHITELIST_HIDE_PID) -ErrorAction SilentlyContinue; if ($null -eq $p) { exit 1 }; $p.Path"])
+        .env("WHITELIST_HIDE_PID", pid.to_string())
+        .output().map_err(|source| EngineRuntimeError::Io { path: PathBuf::from("powershell.exe"), source })?;
     if !output.status.success() {
         return Ok(false);
     }
-
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    let first = stdout.trim().split(',').next().unwrap_or_default();
-    let image = first.trim().trim_matches('"');
-    let expected_name = expected
-        .file_name()
-        .and_then(|value| value.to_str())
-        .unwrap_or_default();
-
-    Ok(image.eq_ignore_ascii_case(expected_name))
+    let path = String::from_utf8_lossy(&output.stdout);
+    let actual = Path::new(path.trim());
+    Ok(actual
+        .canonicalize()
+        .unwrap_or_else(|_| actual.to_path_buf())
+        == expected
+            .canonicalize()
+            .unwrap_or_else(|_| expected.to_path_buf()))
 }
 
 #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
@@ -522,7 +546,7 @@ fn terminate_pid(pid: u32) -> Result<(), EngineRuntimeError> {
 #[cfg(target_os = "windows")]
 fn terminate_pid(pid: u32) -> Result<(), EngineRuntimeError> {
     let output = Command::new("taskkill")
-        .args(["/PID", &pid.to_string(), "/T"])
+        .args(["/PID", &pid.to_string(), "/F"])
         .output()
         .map_err(|source| EngineRuntimeError::Io {
             path: PathBuf::from("taskkill"),

@@ -10,7 +10,7 @@ use whitelist_hide_service::{
     DiagnosticItem, DiagnosticLevel, PlatformBackend,
 };
 
-pub const PF_ANCHOR: &str = "com.whitelisthide";
+pub const PF_ANCHOR: &str = "com.apple/whitelist-hide";
 
 pub const UTUN_INTERFACE: &str = "utun50";
 pub const UTUN_LOCAL: &str = "10.77.0.1";
@@ -155,6 +155,25 @@ pub fn install_pf_routes(
     tcp_ports: &[PortRange],
     udp_ports: &[PortRange],
 ) -> Result<(), MacOsError> {
+    // The default macOS ruleset evaluates com.apple/* anchors. An orphan
+    // top-level anchor can contain rules without ever seeing packets.
+    let root = Command::new("/sbin/pfctl")
+        .arg("-sr")
+        .output()
+        .map_err(|source| MacOsError::CommandIo {
+            program: "/sbin/pfctl".to_owned(),
+            source,
+        })?;
+    if !root.status.success()
+        || !String::from_utf8_lossy(&root.stdout).contains("anchor \"com.apple/*\"")
+    {
+        return Err(MacOsError::ActionUnavailable("PF root ruleset does not evaluate com.apple/*; custom firewall configuration requires manual integration".to_owned()));
+    }
+    if owned_pf_anchor_has_rules()? {
+        return Err(MacOsError::ActionUnavailable(
+            "project PF anchor is already occupied".to_owned(),
+        ));
+    }
     let rules = pf_rules(tcp_ports, udp_ports);
     let mut child = Command::new("/sbin/pfctl")
         .args(["-a", PF_ANCHOR, "-f", "-"])

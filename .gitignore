@@ -5,3 +5,13 @@
 *.log
 *.tmp
 .env
+
+node_modules/
+dist/
+build/
+apps/desktop/src-tauri/target/
+apps/desktop/src-tauri/icons/
+apps/desktop/src-tauri/binaries/
+apps/desktop/src-tauri/resources/whitelist-hide/generated/*
+!apps/desktop/src-tauri/resources/whitelist-hide/generated/README.txt
+__pycache__/

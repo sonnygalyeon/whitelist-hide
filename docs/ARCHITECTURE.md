@@ -79,7 +79,7 @@ Owned resources:
 
 - interface: `utun50`;
 - local/peer: `10.77.0.1 / 10.77.0.2`;
-- PF anchor: `com.whitelisthide`.
+- PF anchor: `com.apple/whitelist-hide`.
 
 The backend snapshots the default interface/gateway and gateway MAC. If whitelist-hide enables PF, the returned enable token is journaled and released on stop. It does not globally disable or flush PF.
 

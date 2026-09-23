@@ -1,6 +1,6 @@
 [package]
 name = "whitelist-hide-desktop"
-version = "0.1.0"
+version = "1.0.0-rc.1"
 description = "Desktop application for whitelist-hide"
 edition = "2024"
 
@@ -13,7 +13,7 @@ tauri-build = { version = "2", features = [] }
 
 [dependencies]
 serde = { version = "1", features = ["derive"] }
-tauri = { version = "2", features = [] }
+tauri = { version = "2", features = ["tray-icon"] }
 tauri-plugin-shell = "2"
 whitelist-hide-core = { path = "../../../crates/core" }
 whitelist-hide-service = { path = "../../../crates/service" }

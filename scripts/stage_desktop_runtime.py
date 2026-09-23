@@ -144,6 +144,8 @@ def main() -> int:
                 str(driver["license"]),
             ),
         ]
+        for filename in ("zapret-lib.lua", "zapret-antidpi.lua"):
+            dependencies.append((filename, filename + ".toml", source, str(upstream["license"])))
         for filename, manifest_name, dep_source, dep_license in dependencies:
             dst = copy_runtime(
                 args.input / filename,
@@ -185,6 +187,16 @@ def main() -> int:
         "\n".join(config_lines),
         encoding="utf-8",
     )
+
+    for profile, mode in (("split", "multi-split"), ("disorder", "multi-disorder")):
+        config = "\n".join(config_lines).replace('name = "standard"', f'name = "{profile}"')
+        (args.output / "default" / f"config-{profile}.toml").write_text(config, encoding="utf-8")
+        strategy = strategy_src.read_text(encoding="utf-8").replace('id = "standard"', f'id = "{profile}"')
+        strategy += f'\n[[desync]]\nmode = "{mode}"\npositions = [1, 2]\n'
+        (args.output / "default" / f"{profile}.toml").write_text(strategy, encoding="utf-8")
+
+    if (args.input / "licenses").is_dir():
+        shutil.copytree(args.input / "licenses", args.output / "licenses")
 
     provenance = args.input / "PROVENANCE.txt"
     if provenance.is_file():

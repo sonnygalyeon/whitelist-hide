@@ -17,6 +17,19 @@ permissions:
   contents: read
 
 jobs:
+  quality:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - run: cargo fmt --all -- --check
+      - run: cargo clippy --workspace --all-targets --locked -- -D warnings
+      - run: cargo test --workspace --locked
+      - run: python3 scripts/release_gate.py
+      - run: python3 -m unittest discover -s scripts/tests
+
   bundle:
     strategy:
       fail-fast: false
@@ -24,10 +37,16 @@ jobs:
         include:
           - os: ubuntu-24.04
             name: linux
+            arch: x64
           - os: macos-latest
             name: macos
+            arch: arm64
+          - os: macos-15-intel
+            name: macos
+            arch: x64
           - os: windows-latest
             name: windows
+            arch: x64
     runs-on: ${{ matrix.os }}
 
     steps:
@@ -86,7 +105,7 @@ jobs:
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
-          sudo apt-get install -y             build-essential zlib1g-dev libnetfilter-queue-dev             libnfnetlink-dev libmnl-dev libcap-dev             libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
+          sudo apt-get install -y             build-essential zlib1g-dev libnetfilter-queue-dev             libnfnetlink-dev libmnl-dev libcap-dev nftables pkg-config             libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
 
       - name: Build Linux nfqws
         if: runner.os == 'Linux'
@@ -98,7 +117,7 @@ jobs:
           LICENSE_NAME: ${{ steps.upstream.outputs.license }}
         run: |
           set -euo pipefail
-          make -C "upstream/$SUBDIR" CFLAGS="-static -std=gnu99 -Os -flto=auto -ffunction-sections -fdata-sections"
+          python3 scripts/build_linux_engine.py --source "upstream/$SUBDIR"
           test -x "upstream/$SUBDIR/$ARTIFACT"
           mkdir -p dist/engine
           cp "upstream/$SUBDIR/$ARTIFACT" "dist/engine/$ARTIFACT"
@@ -184,6 +203,7 @@ jobs:
           mkdir -p dist/engine &&
           cp "upstream/$SUBDIR/$ARTIFACT" dist/engine/ &&
           cp /usr/bin/cygwin1.dll dist/engine/ &&
+          cp upstream/lua/zapret-lib.lua upstream/lua/zapret-antidpi.lua dist/engine/ &&
           printf 'source_commit=%s\nlicense=%s\nbuilder=github-actions/windows-latest\n' "$COMMIT" "$LICENSE_NAME" > dist/engine/PROVENANCE.txt
 
       - name: Read pinned WinDivert release
@@ -213,6 +233,14 @@ jobs:
           Add-Content dist/engine/PROVENANCE.txt "windivert_license=$env:WINDIVERT_LICENSE"
           Add-Content dist/engine/PROVENANCE.txt "windivert_archive_sha256=$env:EXPECTED_SHA256"
 
+      - name: Collect third-party license notices
+        shell: bash
+        run: |
+          mkdir -p dist/engine/licenses
+          cp upstream/"$(python3 scripts/upstream_lock.py "${{ matrix.name }}" | sed -n 's/^license_path=//p')" dist/engine/licenses/engine-LICENSE.txt
+          if [ -d build/linux-static/licenses ]; then cp build/linux-static/licenses/* dist/engine/licenses/; fi
+          if [ -d WinDivert ]; then find WinDivert -iname "*LICENSE*" -type f -exec cp {} dist/engine/licenses/ \; ; fi
+
       - name: Resolve build target on Unix
         if: runner.os != 'Windows'
         shell: bash
@@ -240,12 +268,27 @@ jobs:
         working-directory: apps/desktop
         run: npm ci
 
+      - name: Test frontend
+        working-directory: apps/desktop
+        run: npm test
+
       - name: Generate platform icons
         working-directory: apps/desktop
         run: npx tauri icon app-icon.svg
 
       - name: Build privileged helper
-        run: cargo build --release --locked -p whitelist-hide-helper
+        run: cargo build --release --locked -p whitelist-hide-helper -p whitelist-hide-cli
+
+      - name: Exercise bundled engine on Unix runner
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          sudo env GITHUB_ACTIONS=true python3 scripts/smoke_desktop_runtime.py --resources apps/desktop/src-tauri/resources/whitelist-hide/generated --cli target/release/whitelist-hide --helper target/release/whitelist-hide-helper --live
+
+      - name: Exercise bundled engine on Windows runner
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: python scripts/smoke_desktop_runtime.py --resources apps/desktop/src-tauri/resources/whitelist-hide/generated --cli target/release/whitelist-hide.exe --helper target/release/whitelist-hide-helper.exe --live
 
       - name: Prepare helper sidecar on Unix
         if: runner.os != 'Windows'
@@ -270,7 +313,7 @@ jobs:
 
       - name: Build desktop bundle
         working-directory: apps/desktop
-        run: npm run tauri:build
+        run: npm run tauri:build -- --ci
 
       - name: Checksum desktop bundle on Unix
         if: runner.os != 'Windows'
@@ -297,6 +340,54 @@ jobs:
       - name: Upload Tauri bundles
         uses: actions/upload-artifact@v4
         with:
-          name: whitelist-hide-desktop-${{ matrix.name }}
+          name: whitelist-hide-desktop-${{ matrix.name }}-${{ matrix.arch }}
           path: apps/desktop/src-tauri/target/release/bundle/
           if-no-files-found: error
+
+  publish:
+    needs: [quality, bundle]
+    if: github.ref == 'refs/heads/ver1.0'
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: whitelist-hide-desktop-*
+          path: release-assets
+      - uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const path = require('path');
+            const crypto = require('crypto');
+            const files = [];
+            function walk(dir) {
+              for (const item of fs.readdirSync(dir, {withFileTypes:true})) {
+                const p = path.join(dir, item.name);
+                if (item.isDirectory()) walk(p);
+                else if (/\.(exe|msi|dmg|deb|rpm|AppImage)$/.test(item.name)) files.push(p);
+              }
+            }
+            walk('release-assets');
+            if (files.length < 4) throw new Error('Incomplete installer set');
+            const tag = `desktop-${context.sha.slice(0,12)}`;
+            let release;
+            try { release = (await github.rest.repos.getReleaseByTag({...context.repo,tag})).data; }
+            catch (e) {
+              if (e.status !== 404) throw e;
+              release = (await github.rest.repos.createRelease({...context.repo,tag_name:tag,target_commitish:context.sha,
+                name:'whitelist-hide 1.0.0-rc.1',prerelease:true,draft:true,
+                body:`Desktop release candidate. Source: ${context.sha}\n\nWindows x64, macOS ARM64/Intel, Linux x64. Unsigned installers; Apple notarization is not configured. Native engine lifecycle smoke tests passed on the CI runners; installation dialogs and service availability on your network still require verification. See README for instructions.`})).data;
+            }
+            const sums = [];
+            for (const file of files) {
+              const group = file.split(path.sep)[1].replace('whitelist-hide-desktop-','');
+              const name = `${group}-${path.basename(file)}`;
+              const data = fs.readFileSync(file);
+              sums.push(`${crypto.createHash('sha256').update(data).digest('hex')}  ${name}`);
+              if (!release.assets.some(a=>a.name===name)) await github.rest.repos.uploadReleaseAsset({...context.repo,release_id:release.id,name,data});
+            }
+            if (!release.assets.some(a=>a.name==='SHA256SUMS.txt')) await github.rest.repos.uploadReleaseAsset({...context.repo,release_id:release.id,name:'SHA256SUMS.txt',data:Buffer.from(sums.join('\n')+'\n')});
+            await github.rest.repos.updateRelease({...context.repo,release_id:release.id,draft:false});
+            await core.summary.addLink('Download release candidate',release.html_url).write();

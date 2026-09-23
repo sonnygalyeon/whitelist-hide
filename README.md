@@ -1,128 +1,122 @@
 # whitelist-hide
 
-Cross-platform, auditable packet-filtering and DPI-evasion toolkit for Windows, macOS and Linux.
+Desktop-приложение для управления локальной DPI-фильтрацией на **Windows, macOS и Linux**. Тёмный интерфейс с зелёными акцентами, встроенные движки и профили, одна кнопка запуска, диагностика и восстановление сети.
 
-> **Status:** release-candidate development. The verified engine lifecycle, strategy compiler, scoped platform network resources, watchdog rollback, Tauri desktop shell and source-build pipelines exist. Version 1.0 is still blocked on privileged end-to-end host tests, OS elevation/install integration and release signing/packaging evidence.
+**Версия: 1.0.0-rc.1.** Это кандидат в релиз. Сборка установщика, работа сетевого движка и доступность сервисов в конкретной сети — отдельные проверки. Актуальный результат сборки смотрите в [Actions](https://github.com/sonnygalyeon/whitelist-hide/actions/workflows/release-desktop.yml). Непрошедшие проверки не публикуются как готовый релиз.
 
-## What is implemented
+Приложение использует `nfqws`, `utunws`, `winws2` и WinDivert. Оно не меняет внешний IP, не добавляет шифрование и не гарантирует доступ при любом способе блокировки. Телеметрии и фонового скачивания исполняемых файлов нет.
 
-- Strict TOML configuration and strategy schemas with unknown-field rejection.
-- SHA-256 and platform verification before any privileged engine is launched.
-- Deterministic strategy compilation for `nfqws`, `utunws` and `winws`.
-- Linux backend with an owned `inet whitelist_hide` nftables table and NFQUEUE.
-- macOS backend with owned `utun50`, dedicated `com.whitelisthide` PF anchor and PF enable-token restoration.
-- Windows runtime using a verified `winws2` bundle and WinDivert runtime.
-- Runtime ownership journal containing exact engine PID/binary and owned network resources.
-- Watchdog cleanup if the engine or owned packet-path resource disappears.
-- Tauri 2 desktop UI. Mutating UI commands call only the bundled `whitelist-hide-helper`; the WebView does not receive arbitrary shell execution.
-- Pinned source builds for all three desktop engines. WinDivert 2.2.2 is pinned and its release ZIP is SHA-256 verified before extraction.
-- Root Rust, desktop Rust and npm dependency lockfiles.
+## Скачать
 
-## CLI
+Откройте [Releases](https://github.com/sonnygalyeon/whitelist-hide/releases) и выберите пакет своей платформы. Проверенные сборки кандидата помечены **Pre-release**. Если опубликованных пакетов ещё нет, дождитесь успешного workflow `release-desktop`; его раздел **Artifacts** содержит установщики после завершения проверок.
+
+| Платформа | Пакет | Условия |
+| --- | --- | --- |
+| Windows 10/11, x64 | `.exe` (NSIS) или `.msi` | WebView2; подтверждение UAC при включении/выключении |
+| macOS, Apple Silicon | `.dmg`, артефакт `macos-arm64` | Учётная запись администратора |
+| macOS, Intel | `.dmg`, артефакт `macos-x64` | Учётная запись администратора |
+| Ubuntu 24.04 / совместимая Linux x64 | `.deb` | nftables, polkit, WebKitGTK 4.1; графический агент polkit |
+| Другие Linux x64 | `.rpm` / `.AppImage` при успешной сборке | Совместимая glibc, WebKitGTK 4.1, nftables, polkit |
+
+Android, iOS, Windows ARM64 и Linux ARM64 в этот выпуск **не входят**. Наличие Tauri не обеспечивает поддержку мобильных сетевых API.
+
+## Установка
+
+### Windows
+
+1. Скачайте и запустите установщик. При необходимости установщик предложит WebView2.
+2. Откройте **whitelist-hide** из меню «Пуск» обычным способом.
+3. Оставьте профиль **Стандартный**, нажмите **Включить** и подтвердите UAC.
+4. Дождитесь надписи **Фильтрация включена**, затем откройте нужный сервис заново.
+
+Не запускайте одновременно несколько программ, использующих тот же режим фильтрации. Если Windows блокирует драйвер, сохраните отчёт и проверьте причину; отключать системную защиту для запуска не требуется по инструкции проекта.
+
+### macOS
+
+1. Откройте `.dmg` своей архитектуры и перенесите приложение в **Applications / Программы**.
+2. Запустите приложение, выберите профиль и нажмите **Включить**.
+3. Подтвердите системный запрос администратора. Сам GUI работает без root.
+
+Кандидат пока не имеет настроенной Apple notarization. macOS может потребовать явно разрешить открытие в «Конфиденциальность и безопасность». Делайте это только для скачанного вами проверенного пакета; не отключайте Gatekeeper глобально.
+
+Сетевой режим использует `utun50` и собственный PF-anchor `com.apple/whitelist-hide`. При занятом интерфейсе или нестандартном PF ruleset запуск должен завершиться ошибкой. IPv6-фильтрация на macOS этим backend не реализована.
+
+### Linux
+
+1. Предпочтительно откройте `.deb` в системном установщике пакетов: он установит зависимости.
+2. В графической сессии должен работать агент аутентификации polkit.
+3. Откройте приложение из меню, нажмите **Включить** и подтвердите запрос пароля.
+
+Для ручной установки `.deb`:
+
+```bash
+sudo apt install ./whitelist-hide*.deb
+```
+
+AppImage требует установленного `nftables`, `pkexec`/polkit, WebKitGTK 4.1 и, в зависимости от системы, FUSE. Это не универсальный пакет для любого Linux. Команды настройки TOML для обычного запуска не нужны.
+
+## Как пользоваться
+
+1. Выберите **Стандартный** профиль и нажмите **Включить**.
+2. Проверьте нужный сайт или звонок. Зелёный статус подтверждает процесс и системный фильтр, а не доступность конкретного сервиса.
+3. Если результата нет, нажмите **Отключить**, выберите **Разделение пакетов** или **Изменение порядка**, включите повторно. Выбранный профиль запоминается.
+4. **Проверить** обновляет диагностику. Состояние также обновляется автоматически каждые пять секунд.
+5. **Лог движка** показывает последние сообщения запуска. **Сохранить отчёт** записывает текстовый файл в папку загрузок. Файл никуда автоматически не отправляется; перед передачей проверьте пути и сетевые сведения в нём.
+6. При ошибке нажмите **Остановить и восстановить сеть**. Эта кнопка доступна и при неполном пакете или неизвестном состоянии.
+7. При выходе из приложения активную сессию нужно остановить; отмена системного запроса оставляет окно открытым. Меню значка в системном трее позволяет открыть окно или запросить выход.
+
+Фильтруются домены из [встроенного списка](apps/desktop/resources/default/lists/general.txt). Для UDP голосовых соединений используются фильтры протоколов Discord/STUN на указанных в профиле портах. Автоподбор рабочего профиля и редактор пользовательских списков в GUI пока не реализованы.
+
+## Если запуск не удался
+
+| Симптом | Что сделать |
+| --- | --- |
+| «Пакет неполный» | Установите desktop-пакет со встроенным runtime. Архив исходников и `npm run dev` движок не содержат. |
+| Отменён запрос администратора | Повторите операцию и подтвердите запрос. На Linux проверьте агент polkit. |
+| Движок завершился при запуске | Откройте его лог, сохраните отчёт, выполните восстановление и повторите запуск. |
+| «Нужна проверка» / устаревший watchdog | Выполните восстановление. Не считайте такую сессию активной. |
+| Контрольная сумма не совпадает | Переустановите полный пакет из доверенного источника. Не отключайте проверку целостности. |
+| Фильтрация включена, сервис недоступен | Перезапустите сервис, попробуйте другой профиль. Нужен отдельный тест в вашей сети. |
+
+Перед удалением или обновлением остановите сессию и закройте приложение. Затем используйте штатное удаление программы/пакета. Автоматическое удаление активной сессии сторонним uninstall-процессом пока не проверено.
+
+При недоступном GUI для аварийной остановки можно запустить поставляемый `whitelist-hide-helper stop` с подтверждением администратора. Не удаляйте журнал владения вручную: он нужен для остановки записанного процесса. Проект не делает глобальный сброс Winsock, PF или nftables.
+
+## Для разработчика
+
+Rust ≥ 1.85 для core/helper; актуальный stable Rust для Tauri, Node.js 22, Python ≥ 3.12 и нативные зависимости Tauri. Все графы зависимостей зафиксированы.
+
+```bash
+cargo test --workspace --locked
+cargo clippy --workspace --all-targets --locked -- -D warnings
+python3 scripts/release_gate.py
+python3 -m unittest discover -s scripts/tests
+cd apps/desktop
+npm ci
+npm test
+npm run build
+```
+
+`npm run build` собирает frontend. Полный desktop-пакет требует движка, манифестов, helper-sidecar и иконок; последовательность зафиксирована в [release-desktop.yml](.github/workflows/release-desktop.yml). Сборка из Vite без Tauri показывает режим просмотра, кнопки управления сетью в нём отключены.
+
+CLI доступен для диагностики и разработки:
 
 ```text
 whitelist-hide doctor
 whitelist-hide status
-whitelist-hide config-path
-
-whitelist-hide config validate [PATH]
-whitelist-hide config verify [PATH]
-
-whitelist-hide strategy validate <PATH>
-whitelist-hide strategy compile <PATH> <nfqws|utunws|winws>
-
-whitelist-hide engine verify <MANIFEST> <BINARY>
-whitelist-hide engine launch <MANIFEST> <BINARY> [ARGS...]
-whitelist-hide engine stop
-
+whitelist-hide strategy compile <STRATEGY> <nfqws|utunws|winws>
 whitelist-hide session start <CONFIG> <STRATEGY>
 whitelist-hide session stop
-whitelist-hide session health
-
-whitelist-hide backend <macos|windows|linux> inspect
-whitelist-hide backend <macos|windows|linux> plan <start|stop|cleanup>
 ```
 
-`session start` performs the release-candidate lifecycle:
+## Архитектура и проверка
 
-```text
-load config
-  -> verify engine + dependency manifests/SHA/platform
-  -> validate + compile strategy
-  -> create only project-owned packet-path resources
-  -> launch verified engine
-  -> persist ownership state
-  -> immediate health check
-  -> watchdog
-```
+GUI → фиксированные команды Rust → bundled helper → системное подтверждение прав → controller → проверенный движок. Helper сериализует операции запуска/остановки. Привилегированный watchdog публикует статус для непривилегированного GUI; устаревший статус не отображается как работающая сессия.
 
-A failure rolls back resources owned by whitelist-hide. The project does not use broad Winsock, PF, routing or nftables resets as normal recovery.
+- [Обзор веток и интегрированных исправлений](docs/BRANCH_AUDIT.md)
+- [Текущее состояние и границы проверки](docs/RELEASE_CANDIDATE_STATUS.md)
+- [Критерии стабильного релиза](docs/V1_RELEASE_GATE.md)
+- [Исходники сторонних компонентов](docs/UPSTREAM.md)
+- [Безопасность](SECURITY.md)
 
-## Desktop
-
-The desktop app uses the same diagnostics model as the CLI. Start/Stop/Health are forwarded to the bundled helper as fixed arguments rather than executed by the WebView.
-
-The packaged helper is deliberately separate from the GUI. **Automatic OS-specific privilege elevation/installation is still a v1 release gate.** Until that integration is finished, a normal unprivileged desktop launch may report a permission error when Start/Stop requires Administrator/root rights.
-
-## Building
-
-The workspace declares Rust 1.85 as its MSRV.
-
-```bash
-cargo build --locked
-cargo test --workspace --locked
-```
-
-Desktop:
-
-```bash
-cd apps/desktop
-npm ci
-npm run build
-```
-
-The Tauri Rust workspace has its own committed `apps/desktop/src-tauri/Cargo.lock`.
-
-## External engines and drivers
-
-No opaque engine/driver binaries are committed to the repository. CI builds/stages them from pinned metadata in `third_party/upstream.lock.toml`:
-
-- macOS: Flowseal `utunws`, pinned commit;
-- Linux: bol-van `nfqws`, pinned commit;
-- Windows: bol-van `zapret2/winws2`, pinned commit;
-- Windows driver: WinDivert 2.2.2, pinned source metadata and pinned official release archive SHA-256.
-
-See `docs/UPSTREAM.md` and `docs/ARTIFACTS.md`.
-
-## Recovery model
-
-Runtime cleanup targets only resources recorded or reserved by this project:
-
-- Linux: `inet whitelist_hide`;
-- macOS: `com.whitelisthide`, `utun50`, and only the PF token created by whitelist-hide;
-- Windows: the recorded engine process and its WinDivert-backed session.
-
-If the engine terminates unexpectedly, the helper watchdog attempts scoped rollback. Real-host crash/recovery cycling is still required before the v1 tag.
-
-## Release status
-
-The hard release checklist is `docs/V1_RELEASE_GATE.md`. Evidence and remaining blockers are tracked in `docs/RELEASE_CANDIDATE_STATUS.md`.
-
-No `ver1.0` branch or `v1.0.0` tag should be created until those live integration gates pass.
-
-## Security
-
-Core rules:
-
-- no telemetry;
-- no silent runtime executable downloads;
-- no execute-before-verify;
-- no arbitrary privileged shell IPC;
-- least privilege and explicit resource ownership;
-- fail closed on integrity mismatch.
-
-See `SECURITY.md` and `docs/ARCHITECTURE.md`.
-
-## License
-
-Project licensing must be finalized before the public v1 release. Third-party components retain their own licenses.
+Установщики кандидата не подписаны сертификатом издателя. SHA-256 помогает проверить целостность скачивания, но сам по себе не подтверждает издателя. Лицензия собственного кода пока владельцем не выбрана; сторонние компоненты сохраняют свои лицензии. До выбора лицензии проект не заявляет свободное право на переиздание всего пакета.
