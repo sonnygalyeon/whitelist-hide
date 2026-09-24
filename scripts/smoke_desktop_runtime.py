@@ -28,17 +28,16 @@ def main():
     parser.add_argument('--live', action='store_true')
     args = parser.parse_args()
     root, cli, helper = args.resources.resolve(), args.cli.resolve(), args.helper.resolve()
-    if os.name != 'nt':
-        # Engines drop root privileges. The runner's home may be private, unlike
-        # an installed system application. Never relax the runner home itself.
-        with tempfile.TemporaryDirectory(prefix='white-hide-smoke-', dir='/tmp') as tmp:
-            fixture = Path(tmp)
+    # Exercise paths with spaces on every OS, as in Program Files on Windows.
+    with tempfile.TemporaryDirectory(prefix='white hide smoke ',
+                                     dir='/tmp' if os.name != 'nt' else None) as tmp:
+        fixture = Path(tmp)
+        root = shutil.copytree(root, fixture / 'bundle')
+        if os.name != 'nt':
+            # Engines drop root privileges. Keep the runner's home private.
             fixture.chmod(0o755)
-            root = shutil.copytree(root, fixture / 'bundle')
             for path in [root, *root.rglob('*')]:
                 path.chmod(path.stat().st_mode | (0o555 if path.is_dir() else 0o444))
-            exercise(root, cli, helper, args.live)
-    else:
         exercise(root, cli, helper, args.live)
 
 

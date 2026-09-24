@@ -293,18 +293,42 @@ fn compile_list_args(
     for list in &strategy.filters.domain_lists {
         args.push(format!(
             "--hostlist={}",
-            resolve_strategy_data_path(base, list)?.display()
+            format_engine_data_path(&resolve_strategy_data_path(base, list)?)
         ));
     }
 
     for list in &strategy.filters.ip_lists {
         args.push(format!(
             "--ipset={}",
-            resolve_strategy_data_path(base, list)?.display()
+            format_engine_data_path(&resolve_strategy_data_path(base, list)?)
         ));
     }
 
     Ok(args)
+}
+
+fn format_engine_data_path(path: &Path) -> String {
+    #[cfg(windows)]
+    {
+        windows_engine_path(&path.to_string_lossy())
+    }
+    #[cfg(not(windows))]
+    {
+        path.display().to_string()
+    }
+}
+
+#[cfg(any(windows, test))]
+fn windows_engine_path(path: &str) -> String {
+    // Cygwin interprets backslashes as escapes in arguments from native callers.
+    // Rust canonical paths also have a Win32 verbatim prefix it cannot consume.
+    if let Some(unc) = path.strip_prefix(r"\\?\UNC\") {
+        format!("//{}", unc.replace('\\', "/"))
+    } else {
+        path.strip_prefix(r"\\?\")
+            .unwrap_or(path)
+            .replace('\\', "/")
+    }
 }
 
 fn compile_v1_desync(stages: &[DesyncStage], args: &mut Vec<String>) {
@@ -567,5 +591,52 @@ positions = [2, 1]
     #[test]
     fn rejects_unknown_engine() {
         assert!(EngineFlavor::parse("mystery").is_err());
+    }
+
+    #[test]
+    fn bundled_voice_profiles_do_not_require_a_hostname() {
+        let strategy = StrategyDefinition::parse(include_str!(
+            "../../../apps/desktop/resources/default/strategy.toml"
+        ))
+        .expect("valid bundled strategy");
+        for engine in [
+            EngineFlavor::Nfqws,
+            EngineFlavor::Utunws,
+            EngineFlavor::Winws,
+        ] {
+            let compiled = compile_strategy(&strategy, Path::new("strategy.toml"), engine)
+                .expect("compile bundled strategy");
+            let profiles: Vec<_> = compiled.args.split(|arg| arg == "--new").collect();
+            let voice = profiles
+                .iter()
+                .find(|profile| {
+                    profile
+                        .iter()
+                        .any(|arg| arg.starts_with("--filter-l7=") && arg.contains("discord"))
+                })
+                .expect("Discord voice profile");
+            assert!(voice.iter().any(|arg| arg.contains("stun")));
+            assert!(!voice.iter().any(|arg| arg.starts_with("--hostlist=")));
+            let quic = profiles
+                .iter()
+                .find(|profile| profile.iter().any(|arg| arg == "--filter-udp=443"))
+                .expect("QUIC profile");
+            assert!(quic.iter().any(|arg| arg.starts_with("--hostlist=")));
+        }
+    }
+
+    #[test]
+    fn windows_engine_paths_preserve_spaces_and_unc_shares() {
+        for (input, expected) in [
+            (
+                r"C:\Program Files\White Hide\list.txt",
+                "C:/Program Files/White Hide/list.txt",
+            ),
+            (r"\\?\C:\White Hide\list.txt", "C:/White Hide/list.txt"),
+            (r"\\?\UNC\server\share\list.txt", "//server/share/list.txt"),
+            (r"\\server\share\list.txt", "//server/share/list.txt"),
+        ] {
+            assert_eq!(windows_engine_path(input), expected);
+        }
     }
 }
