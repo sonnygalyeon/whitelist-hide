@@ -303,6 +303,8 @@ jobs:
         run: npx tauri icon app-icon.svg
 
       - name: Build privileged helper
+        env:
+          RUSTFLAGS: ${{ runner.os == 'Windows' && '-C target-feature=+crt-static' || '' }}
         run: cargo build --release --locked -p whitelist-hide-helper -p whitelist-hide-cli
 
       - name: Exercise bundled engine on Unix runner
