@@ -307,14 +307,16 @@ jobs:
 
       - name: Exercise bundled engine on Unix runner
         if: runner.os != 'Windows'
+        timeout-minutes: 5
         shell: bash
         run: |
-          sudo env GITHUB_ACTIONS=true python3 scripts/smoke_desktop_runtime.py --resources apps/desktop/src-tauri/resources/whitelist-hide/generated --cli target/release/whitelist-hide --helper target/release/whitelist-hide-helper --live
+          sudo env GITHUB_ACTIONS=true python3 -u scripts/smoke_desktop_runtime.py --resources apps/desktop/src-tauri/resources/whitelist-hide/generated --cli target/release/whitelist-hide --helper target/release/whitelist-hide-helper --live
 
       - name: Exercise bundled engine on Windows runner
         if: runner.os == 'Windows'
+        timeout-minutes: 5
         shell: pwsh
-        run: python scripts/smoke_desktop_runtime.py --resources apps/desktop/src-tauri/resources/whitelist-hide/generated --cli target/release/whitelist-hide.exe --helper target/release/whitelist-hide-helper.exe --live
+        run: python -u scripts/smoke_desktop_runtime.py --resources apps/desktop/src-tauri/resources/whitelist-hide/generated --cli target/release/whitelist-hide.exe --helper target/release/whitelist-hide-helper.exe --live
 
       - name: Prepare helper sidecar on Unix
         if: runner.os != 'Windows'

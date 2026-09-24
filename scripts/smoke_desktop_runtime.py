@@ -14,6 +14,7 @@ import tomllib
 
 
 def run(args, check=True):
+    print(f'Running {Path(args[0]).name}: {" ".join(str(a) for a in args[1:])}', flush=True)
     result = subprocess.run([str(a) for a in args], text=True, capture_output=True, timeout=90)
     if check and result.returncode:
         raise RuntimeError(f'{args[0]} failed ({result.returncode})\n{result.stdout}\n{result.stderr}')
