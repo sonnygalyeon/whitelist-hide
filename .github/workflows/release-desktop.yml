@@ -246,14 +246,26 @@ jobs:
           Add-Content dist/engine/PROVENANCE.txt "windivert_archive_sha256=$env:EXPECTED_SHA256"
 
       - name: Collect third-party license notices
-        shell: bash
+        shell: python
         env:
-          LICENSE_PATH: ${{ steps.upstream.outputs.license_path || steps.upstream_windows.outputs.license_path }}
+          PLATFORM_NAME: ${{ matrix.name }}
         run: |
-          mkdir -p dist/engine/licenses
-          cp "upstream/$LICENSE_PATH" dist/engine/licenses/engine-LICENSE.txt
-          if [ -d build/linux-static/licenses ]; then cp build/linux-static/licenses/* dist/engine/licenses/; fi
-          if [ -d WinDivert ]; then find WinDivert -iname "*LICENSE*" -type f -exec cp {} dist/engine/licenses/ \; ; fi
+          import os
+          from pathlib import Path
+          import shutil
+          import tomllib
+          lock = tomllib.loads(Path('third_party/upstream.lock.toml').read_text())
+          target = Path('dist/engine/licenses')
+          target.mkdir(parents=True, exist_ok=True)
+          shutil.copy2(Path('upstream') / lock[os.environ['PLATFORM_NAME']]['license_path'], target / 'engine-LICENSE.txt')
+          for source in Path('build/linux-static/licenses').glob('*'):
+              if source.is_file():
+                  shutil.copy2(source, target / source.name)
+          for source in Path('WinDivert').rglob('*'):
+              if source.is_file() and 'license' in source.name.lower():
+                  shutil.copy2(source, target / ('WinDivert-' + source.name))
+          for source in Path('.').glob('luajit2-*/COPYRIGHT'):
+              shutil.copy2(source, target / 'LuaJIT-COPYRIGHT.txt')
 
       - name: Resolve build target on Unix
         if: runner.os != 'Windows'
