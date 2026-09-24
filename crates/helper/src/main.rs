@@ -1,4 +1,6 @@
 mod health;
+#[cfg(windows)]
+mod windows_stdio;
 
 use fs2::FileExt;
 use std::env;
@@ -12,6 +14,12 @@ use std::time::Duration;
 use whitelist_hide_controller::{SessionController, default_state_path};
 
 fn main() {
+    #[cfg(windows)]
+    if let Err(error) = windows_stdio::prevent_inheritance() {
+        eprintln!("cannot isolate helper output handles: {error}");
+        std::process::exit(5);
+    }
+
     let args: Vec<String> = env::args().skip(1).collect();
 
     if requires_elevation(&args) && !is_elevated() {

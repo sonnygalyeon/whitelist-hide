@@ -295,6 +295,7 @@ version = "1.0.0-rc.1"
 dependencies = [
  "fs2",
  "whitelist-hide-controller",
+ "winapi",
 ]
 
 [[package]]

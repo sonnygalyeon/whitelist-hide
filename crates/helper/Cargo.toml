@@ -12,5 +12,9 @@ path = "src/main.rs"
 fs2 = "0.4"
 whitelist-hide-controller = { path = "../controller" }
 
-[lints]
-workspace = true
+[target.'cfg(windows)'.dependencies]
+winapi = { version = "0.3.9", features = ["handleapi", "processenv", "winbase"] }
+
+[lints.rust]
+# Only windows_stdio::prevent_inheritance may call the narrowly scoped Win32 API.
+unsafe_code = "deny"
