@@ -44,6 +44,11 @@
       "icons/icon.icns",
       "icons/icon.ico"
     ],
+    "windows": {
+      "wix": {
+        "version": "1.0.0.1"
+      }
+    },
     "linux": {
       "deb": {
         "depends": [
