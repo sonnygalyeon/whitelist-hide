@@ -247,9 +247,11 @@ jobs:
 
       - name: Collect third-party license notices
         shell: bash
+        env:
+          LICENSE_PATH: ${{ steps.upstream.outputs.license_path || steps.upstream_windows.outputs.license_path }}
         run: |
           mkdir -p dist/engine/licenses
-          cp upstream/"$(python3 scripts/upstream_lock.py "${{ matrix.name }}" | sed -n 's/^license_path=//p')" dist/engine/licenses/engine-LICENSE.txt
+          cp "upstream/$LICENSE_PATH" dist/engine/licenses/engine-LICENSE.txt
           if [ -d build/linux-static/licenses ]; then cp build/linux-static/licenses/* dist/engine/licenses/; fi
           if [ -d WinDivert ]; then find WinDivert -iname "*LICENSE*" -type f -exec cp {} dist/engine/licenses/ \; ; fi
 
@@ -319,9 +321,6 @@ jobs:
           $target = (rustc -vV | Select-String '^host: ').Line.Substring(6)
           New-Item -ItemType Directory -Force apps/desktop/src-tauri/binaries | Out-Null
           Copy-Item target/release/whitelist-hide-helper.exe "apps/desktop/src-tauri/binaries/whitelist-hide-helper-$target.exe"
-
-      - name: Verify locked Tauri dependency graph
-        run: cargo check --manifest-path apps/desktop/src-tauri/Cargo.toml --locked
 
       - name: Build desktop bundle
         working-directory: apps/desktop

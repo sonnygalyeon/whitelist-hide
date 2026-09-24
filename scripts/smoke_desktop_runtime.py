@@ -5,8 +5,10 @@ import json
 import os
 from pathlib import Path
 import signal
+import shutil
 import subprocess
 import sys
+import tempfile
 import time
 import tomllib
 
@@ -26,6 +28,21 @@ def main():
     parser.add_argument('--live', action='store_true')
     args = parser.parse_args()
     root, cli, helper = args.resources.resolve(), args.cli.resolve(), args.helper.resolve()
+    if os.name != 'nt':
+        # Engines drop root privileges. The runner's home may be private, unlike
+        # an installed system application. Never relax the runner home itself.
+        with tempfile.TemporaryDirectory(prefix='white-hide-smoke-', dir='/tmp') as tmp:
+            fixture = Path(tmp)
+            fixture.chmod(0o755)
+            root = shutil.copytree(root, fixture / 'bundle')
+            for path in [root, *root.rglob('*')]:
+                path.chmod(path.stat().st_mode | (0o555 if path.is_dir() else 0o444))
+            exercise(root, cli, helper, args.live)
+    else:
+        exercise(root, cli, helper, args.live)
+
+
+def exercise(root, cli, helper, live):
     platform = {'darwin': 'utunws', 'win32': 'winws'}.get(sys.platform, 'nfqws')
     profiles = [('config.toml', 'strategy.toml'), ('config-split.toml', 'split.toml'), ('config-disorder.toml', 'disorder.toml')]
     for config_name, strategy_name in profiles:
@@ -39,7 +56,7 @@ def main():
         if result.returncode:
             raise RuntimeError(f'{strategy_name}: engine rejected compiled strategy\n{result.stdout}\n{result.stderr}')
         print(f'{strategy_name}: real engine accepts compiled parameters', flush=True)
-    if not args.live:
+    if not live:
         return
     if os.environ.get('GITHUB_ACTIONS') != 'true':
         raise SystemExit('--live is restricted to disposable GitHub Actions runners')
