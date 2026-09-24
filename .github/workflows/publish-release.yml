@@ -10,6 +10,7 @@ on:
 
 permissions:
   contents: write
+  actions: read
 
 jobs:
   release:
@@ -17,9 +18,32 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Create GitHub release placeholder
+      - name: Download Windows artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: '*windows*'
+          path: release-assets
+          merge-multiple: true
+
+      - name: Download macOS artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: '*macos*'
+          path: release-assets
+          merge-multiple: true
+
+      - name: Download Linux artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: '*linux*'
+          path: release-assets
+          merge-multiple: true
+
+      - name: Create GitHub release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ inputs.tag }}
           name: White Hide ${{ inputs.tag }}
           generate_release_notes: true
+          files: |
+            release-assets/**
