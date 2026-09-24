@@ -623,7 +623,7 @@ where
                     step(
                         "pf",
                         "Load routing rules only into the dedicated whitelist-hide pf anchor.",
-                        Some("/sbin/pfctl -a com.whitelisthide -f -"),
+                        Some(&format!("/sbin/pfctl -a {PF_ANCHOR} -f -")),
                     ),
                     step(
                         "health",
@@ -642,7 +642,7 @@ where
                     step(
                         "pf",
                         "Remove only rules owned by whitelist-hide.",
-                        Some("/sbin/pfctl -a com.whitelisthide -F all"),
+                        Some(&format!("/sbin/pfctl -a {PF_ANCHOR} -F all")),
                     ),
                     step(
                         "engine",
@@ -665,7 +665,7 @@ where
                 steps: vec![step(
                     "pf",
                     "Flush only the dedicated whitelist-hide pf anchor. Global pf state is not disabled or reset.",
-                    Some("/sbin/pfctl -a com.whitelisthide -F all"),
+                    Some(&format!("/sbin/pfctl -a {PF_ANCHOR} -F all")),
                 )],
             }),
         }
@@ -859,11 +859,9 @@ mod tests {
             .expect("cleanup plan should build");
         assert!(plan.executable_now);
         assert_eq!(plan.steps.len(), 1);
-        assert!(
-            plan.steps[0]
-                .command_preview
-                .as_deref()
-                .is_some_and(|command| command.contains(PF_ANCHOR))
+        assert_eq!(
+            plan.steps[0].command_preview,
+            Some(format!("/sbin/pfctl -a {PF_ANCHOR} -F all"))
         );
     }
 }

@@ -1,4 +1,4 @@
-# whitelist-hide
+# White Hide
 
 Desktop-приложение для управления локальной DPI-фильтрацией на **Windows, macOS и Linux**. Тёмный интерфейс с зелёными акцентами, встроенные движки и профили, одна кнопка запуска, диагностика и восстановление сети.
 
@@ -8,11 +8,15 @@ Desktop-приложение для управления локальной DPI-
 
 ## Скачать
 
-Откройте [Releases](https://github.com/sonnygalyeon/whitelist-hide/releases) и выберите пакет своей платформы. Проверенные сборки кандидата помечены **Pre-release**. Если опубликованных пакетов ещё нет, дождитесь успешного workflow `release-desktop`; его раздел **Artifacts** содержит установщики после завершения проверок.
+Исходники и процесс выпуска находятся в основной ветке **`main`**. После успешных проверок workflow `release-desktop` автоматически публикует полный набор в [Releases](https://github.com/sonnygalyeon/whitelist-hide/releases). Текущая версия — кандидат **`v1.0.0-rc.1`**, помеченный **Pre-release**. Рядом с пакетами находится `SHA256SUMS.txt`.
+
+Имена файлов: `White-Hide-Windows-Setup.exe`, `White-Hide-Windows-Setup.msi`, `White-Hide-Windows-Portable.zip`, `White-Hide-macOS-arm64.dmg`, `White-Hide-macOS-intel.dmg`, `White-Hide-Linux.AppImage`, `White-Hide-Linux.deb`, `White-Hide-Linux.rpm`. Релиз остаётся черновиком до проверки всех восьми загруженных пакетов.
+
+Ручной **Publish White Hide Release → Run workflow → main** выполняет ту же полную сборку. Опубликованные файлы другой ревизией не перезаписываются: для следующего выпуска нужно поднять версию.
 
 | Платформа | Пакет | Условия |
 | --- | --- | --- |
-| Windows 10/11, x64 | `.exe` (NSIS) или `.msi` | WebView2; подтверждение UAC при включении/выключении |
+| Windows 10/11, x64 | `.exe` (NSIS), `.msi` или Portable `.zip` | WebView2; подтверждение UAC при включении/выключении |
 | macOS, Apple Silicon | `.dmg`, артефакт `macos-arm64` | Учётная запись администратора |
 | macOS, Intel | `.dmg`, артефакт `macos-x64` | Учётная запись администратора |
 | Ubuntu 24.04 / совместимая Linux x64 | `.deb` | nftables, polkit, WebKitGTK 4.1; графический агент polkit |
@@ -24,8 +28,8 @@ Android, iOS, Windows ARM64 и Linux ARM64 в этот выпуск **не вх�
 
 ### Windows
 
-1. Скачайте и запустите установщик. При необходимости установщик предложит WebView2.
-2. Откройте **whitelist-hide** из меню «Пуск» обычным способом.
+1. Скачайте и запустите установщик. При необходимости установщик предложит WebView2. Для Portable распакуйте весь архив в отдельную папку и запустите `White Hide.exe`; WebView2 должен быть установлен.
+2. Откройте **White Hide** из меню «Пуск» обычным способом.
 3. Оставьте профиль **Стандартный**, нажмите **Включить** и подтвердите UAC.
 4. Дождитесь надписи **Фильтрация включена**, затем откройте нужный сервис заново.
 
@@ -50,7 +54,7 @@ Android, iOS, Windows ARM64 и Linux ARM64 в этот выпуск **не вх�
 Для ручной установки `.deb`:
 
 ```bash
-sudo apt install ./whitelist-hide*.deb
+sudo apt install ./White-Hide-Linux.deb
 ```
 
 AppImage требует установленного `nftables`, `pkexec`/polkit, WebKitGTK 4.1 и, в зависимости от системы, FUSE. Это не универсальный пакет для любого Linux. Команды настройки TOML для обычного запуска не нужны.

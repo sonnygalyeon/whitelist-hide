@@ -206,14 +206,14 @@ pub fn run() {
             use tauri::menu::{Menu, MenuItem};
             use tauri::tray::TrayIconBuilder;
             let show =
-                MenuItem::with_id(app, "show", "Открыть whitelist-hide", true, None::<&str>)?;
+                MenuItem::with_id(app, "show", "Открыть White Hide", true, None::<&str>)?;
             let quit = MenuItem::with_id(app, "quit", "Выйти…", true, None::<&str>)?;
             let menu = Menu::with_items(app, &[&show, &quit])?;
             if let Some(icon) = app.default_window_icon().cloned() {
                 // Tray availability must not prevent the main window from opening.
                 let _ = TrayIconBuilder::new()
                     .icon(icon)
-                    .tooltip("whitelist-hide")
+                    .tooltip("White Hide")
                     .menu(&menu)
                     .on_menu_event(|app, event| {
                         if let Some(window) = app.get_webview_window("main") {
