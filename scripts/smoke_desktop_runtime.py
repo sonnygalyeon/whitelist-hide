@@ -39,7 +39,49 @@ def main():
             fixture.chmod(0o755)
             for path in [root, *root.rglob('*')]:
                 path.chmod(path.stat().st_mode | (0o555 if path.is_dir() else 0o444))
-        exercise(root, cli, helper, args.live)
+        windows_live = os.name == 'nt' and args.live
+        if windows_live:
+            if os.environ.get('GITHUB_ACTIONS') != 'true':
+                raise SystemExit('--live is restricted to disposable GitHub Actions runners')
+            if windows_driver_path():
+                raise SystemExit('runner already has a WinDivert service; refusing to interfere')
+        try:
+            exercise(root, cli, helper, args.live)
+        finally:
+            if windows_live:
+                cleanup_windows_fixture(root)
+
+
+def windows_driver_path():
+    return run(['powershell.exe', '-NoLogo', '-NoProfile', '-NonInteractive', '-Command',
+                "(Get-CimInstance Win32_SystemDriver -Filter \"Name='WinDivert'\").PathName"]).stdout.strip().strip('"')
+
+
+def cleanup_windows_fixture(root):
+    # WinDivert stays loaded after its last handle closes. Only this disposable
+    # runner's driver may be unloaded; never stop a service backed by another file.
+    registered = windows_driver_path()
+    if not registered:
+        return
+    if registered.startswith(('\\??\\', '\\\\?\\')):
+        registered = registered[4:]
+    driver = root / 'runtime/WinDivert64.sys'
+    if Path(registered).resolve() != driver.resolve():
+        raise RuntimeError(f'refusing to unload another WinDivert driver: {registered}')
+    result = run(['sc.exe', 'stop', 'WinDivert'], check=False)
+    if result.returncode not in (0, 1062):  # ERROR_SERVICE_NOT_ACTIVE is harmless.
+        raise RuntimeError(f'cannot stop fixture driver: {result.stdout} {result.stderr}')
+    run(['sc.exe', 'delete', 'WinDivert'])
+    deadline = time.monotonic() + 15
+    while True:
+        try:
+            driver.unlink()
+            break
+        except PermissionError:
+            if time.monotonic() >= deadline:
+                raise
+            time.sleep(0.2)
+    print('Owned CI WinDivert service unloaded and removed', flush=True)
 
 
 def exercise(root, cli, helper, live):

@@ -59,7 +59,8 @@ def package(platform, arch, bundle, desktop, helper, runtime, output):
                 'Extract the entire archive before running White Hide.exe.\n'
                 'Microsoft Edge WebView2 Runtime is required.\n'
                 'Confirm the UAC prompt when starting or stopping a session.\n'
-                'Stop the session and close the application before moving or deleting this folder.\n')
+                'Stop the session and close the application before moving or deleting this folder.\n'
+                'Windows may keep the shared WinDivert driver loaded; reboot if its file remains locked.\n')
 
 
 def main():
