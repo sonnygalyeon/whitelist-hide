@@ -69,9 +69,13 @@ def cleanup_windows_fixture(root):
     if Path(registered).resolve() != driver.resolve():
         raise RuntimeError(f'refusing to unload another WinDivert driver: {registered}')
     result = run(['sc.exe', 'stop', 'WinDivert'], check=False)
-    if result.returncode not in (0, 1062):  # ERROR_SERVICE_NOT_ACTIVE is harmless.
+    if result.returncode not in (0, 1060, 1062):  # Already removed/stopped is harmless.
         raise RuntimeError(f'cannot stop fixture driver: {result.stdout} {result.stderr}')
-    run(['sc.exe', 'delete', 'WinDivert'])
+    result = run(['sc.exe', 'delete', 'WinDivert'], check=False)
+    # WinDivert marks its service for deletion when loading. Stopping it can
+    # remove the service immediately, before this explicit delete arrives.
+    if result.returncode not in (0, 1060, 1072):
+        raise RuntimeError(f'cannot delete fixture service: {result.stdout} {result.stderr}')
     deadline = time.monotonic() + 15
     while True:
         try:
