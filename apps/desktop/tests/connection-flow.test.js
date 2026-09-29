@@ -4,10 +4,10 @@ import { fileURLToPath } from 'node:url';
 import { webcrypto } from 'node:crypto';
 import assert from 'node:assert/strict';
 import { parseHTML } from 'linkedom';
+import * as state from '../src/state.js';
 test('Connect uses progress, confirms access and recovers after failure', async t => {
  const root=fileURLToPath(new URL('..', import.meta.url));
  const {window,document}=parseHTML(fs.readFileSync(root+'/index.html','utf8'));
- const state=await import(root+'/src/state.js');
  let running=false,report=null,scenario='success', releaseAttempt;
  const until = async predicate => {
    const deadline=Date.now()+2000;
