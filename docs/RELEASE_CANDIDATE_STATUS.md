@@ -1,6 +1,6 @@
-# Release candidate 1.0.0-rc.2 — подготовка
+# Release candidate 1.0.0-rc.2 — опубликован
 
-Исходники rc.2 находятся в `feature/auto-strategy-ru`; новые установщики ещё не опубликованы. Проверенные результаты и состояние публикации: [AUTO_STRATEGY_CHECKS.md](AUTO_STRATEGY_CHECKS.md).
+Исходники rc.2 опубликованы в `main`, тег `v1.0.0-rc.2` указывает на коммит `ec2e42acdc426546247a1058f0af0c7c624e07e0`. Все восемь установочных пакетов и контрольные суммы доступны в [GitHub Releases](https://github.com/sonnygalyeon/whitelist-hide/releases/tag/v1.0.0-rc.2). Проверенные результаты: [AUTO_STRATEGY_CHECKS.md](AUTO_STRATEGY_CHECKS.md).
 
 ## Реализовано
 
@@ -16,7 +16,7 @@
 
 ## Проверки
 
-Локально выполняются Rust tests/fmt/clippy, frontend tests/build, тесты packager и release metadata gate. Актуальная проверка нативных платформ — workflow `release-desktop` на **точном commit SHA**.
+29 сентября 2026 [CI](https://github.com/sonnygalyeon/whitelist-hide/actions/runs/36544420556) и [release-desktop](https://github.com/sonnygalyeon/whitelist-hide/actions/runs/36544420476) прошли на **точном commit SHA** релиза. Проверены Rust tests/fmt/clippy, frontend tests/build на трёх ОС, Tauri, упаковка и метаданные выпуска.
 
 Workflow проверяет реальные параметры каждого профиля через `--dry-run`, затем на одноразовом runner выполняет запуск/остановку всех шести профилей, отклонение повторного запуска и rollback после принудительного завершения движка. Только успешный полный workflow может публиковать пакеты кандидата. Перед открытием релиза сверяются размеры и SHA-256 всех установщиков и файла контрольных сумм.
 
