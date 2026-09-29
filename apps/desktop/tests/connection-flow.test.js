@@ -5,7 +5,8 @@ import { webcrypto } from 'node:crypto';
 import assert from 'node:assert/strict';
 import { parseHTML } from 'linkedom';
 import * as state from '../src/state.js';
-test('Connect uses progress, confirms access and recovers after failure', async t => {
+for (const newline of ['\n', '\r\n']) {
+test(`Connect uses progress, confirms access and recovers after failure (${newline === '\n' ? 'LF' : 'CRLF'})`, async t => {
  const root=fileURLToPath(new URL('..', import.meta.url));
  const {window,document}=parseHTML(fs.readFileSync(root+'/index.html','utf8'));
  let running=false,report=null,scenario='success', releaseAttempt;
@@ -35,7 +36,8 @@ test('Connect uses progress, confirms access and recovers after failure', async 
   }
   throw new Error('Unexpected command: '+command);
  };
- const main=fs.readFileSync(root+'/src/main.js','utf8').replace(/^import .*;\n/gm,'');
+ const main=fs.readFileSync(root+'/src/main.js','utf8')
+   .replace(/\r?\n/g,newline).replace(/^import .*;\r?\n/gm,'');
  const AsyncFunction=Object.getPrototypeOf(async function(){}).constructor;
  const run=new AsyncFunction('document','window','localStorage','crypto','invoke','isTauri','listen','parseHealth','friendlyError','parseSelection','verifiedSelection','setInterval','clearInterval',main);
  await run(document,window,{getItem:()=>null,setItem:()=>{}},webcrypto,invoke,()=>true,async()=>{},state.parseHealth,state.friendlyError,state.parseSelection,state.verifiedSelection,(fn,ms)=>{const id=setInterval(fn,ms===1200?15:100000);intervals.push(id);return id},clearInterval);
@@ -65,3 +67,4 @@ test('Connect uses progress, confirms access and recovers after failure', async 
  intervals.forEach(clearInterval);
 
 });
+}
