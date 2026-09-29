@@ -77,36 +77,36 @@ impl RuntimeState {
             ));
         }
 
-        if let Some(binary) = &self.engine_binary {
-            if !binary.is_absolute() {
-                return Err(RuntimeStateError::InvalidState(
-                    "engine_binary must be an absolute path".to_owned(),
-                ));
-            }
+        if let Some(binary) = &self.engine_binary
+            && !binary.is_absolute()
+        {
+            return Err(RuntimeStateError::InvalidState(
+                "engine_binary must be an absolute path".to_owned(),
+            ));
         }
 
-        if let Some(interface) = &self.owned_interface {
-            if !safe_token(interface) {
-                return Err(RuntimeStateError::InvalidState(
-                    "owned_interface contains unsupported characters".to_owned(),
-                ));
-            }
+        if let Some(interface) = &self.owned_interface
+            && !safe_token(interface)
+        {
+            return Err(RuntimeStateError::InvalidState(
+                "owned_interface contains unsupported characters".to_owned(),
+            ));
         }
 
-        if let Some(scope) = &self.owned_firewall_scope {
-            if !safe_token(&scope.replace('/', ".")) {
-                return Err(RuntimeStateError::InvalidState(
-                    "owned_firewall_scope contains unsupported characters".to_owned(),
-                ));
-            }
+        if let Some(scope) = &self.owned_firewall_scope
+            && !safe_token(&scope.replace('/', "."))
+        {
+            return Err(RuntimeStateError::InvalidState(
+                "owned_firewall_scope contains unsupported characters".to_owned(),
+            ));
         }
 
-        if let Some(token) = &self.owned_firewall_token {
-            if token.is_empty() || !token.bytes().all(|byte| byte.is_ascii_hexdigit()) {
-                return Err(RuntimeStateError::InvalidState(
-                    "owned_firewall_token must be hexadecimal".to_owned(),
-                ));
-            }
+        if let Some(token) = &self.owned_firewall_token
+            && (token.is_empty() || !token.bytes().all(|byte| byte.is_ascii_hexdigit()))
+        {
+            return Err(RuntimeStateError::InvalidState(
+                "owned_firewall_token must be hexadecimal".to_owned(),
+            ));
         }
 
         Ok(())
@@ -279,15 +279,14 @@ pub fn launch_verified_engine_with_options(
     store: &StateStore,
     session_id: &str,
 ) -> Result<EngineLaunchReport, EngineRuntimeError> {
-    if let Some(existing) = store.load()? {
-        if existing.engine_pid.is_some()
-            && matches!(
-                existing.phase,
-                RuntimePhase::Starting | RuntimePhase::Running | RuntimePhase::Stopping
-            )
-        {
-            return Err(EngineRuntimeError::ActiveSession(existing.session_id));
-        }
+    if let Some(existing) = store.load()?
+        && existing.engine_pid.is_some()
+        && matches!(
+            existing.phase,
+            RuntimePhase::Starting | RuntimePhase::Running | RuntimePhase::Stopping
+        )
+    {
+        return Err(EngineRuntimeError::ActiveSession(existing.session_id));
     }
 
     let manifest = ArtifactManifest::load(manifest_path)?;

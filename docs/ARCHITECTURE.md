@@ -2,21 +2,18 @@
 
 ## 1. Components
 
-```text
-CLI -----------------------------+
-                                  |
-Tauri GUI -> bundled helper ------+--> SessionController
-                                  |        |
-                                  |        +-- config + artifact trust
-                                  |        +-- strategy compiler
-                                  |        +-- runtime ownership journal
-                                  |        +-- watchdog/rollback
-                                  |        |
-                                  |        +-- macOS backend
-                                  |        +-- Linux backend
-                                  |        +-- Windows backend
-                                  |
-read-only diagnostics -> AppService
+```mermaid
+flowchart TD
+  GUI["Tauri: Connect"] --> Helper["Privileged helper"]
+  Helper --> Select["Strategy Manager"]
+  Catalog["Versioned protocol catalog"] --> Select
+  Select --> Controller["SessionController"]
+  Controller --> Platform["Windows / macOS / Linux"]
+  Select --> Probe["HTTPS probes"]
+  Probe --> Result{"Two passes and healthy engine?"}
+  Result -->|Yes| Keep["Watchdog and local cache"]
+  Result -->|No| Stop["Scoped rollback"]
+  Stop --> Select
 ```
 
 The control-plane data structures are shared. Privileged network mutations are kept outside the WebView.
@@ -40,27 +37,18 @@ Strategies are structured TOML rather than shell scripts. The compiler emits det
 
 - `nfqws`;
 - `utunws`;
-- `winws`.
+- `winws2` (CLI selector `winws`).
 
 TCP and UDP profiles are separated with `--new` and receive their own hostlist/ipset/desync arguments.
 
 ## 4. Runtime transaction
 
-```text
-verify config/artifacts
-        |
-validate + compile strategy
-        |
-create owned network resource
-        |
-launch verified engine
-        |
-commit ownership journal
-        |
-health check
-        |
-watchdog
-```
+1. Verify config and artifacts.
+2. Validate and compile the protocol rules.
+3. Create only owned network resources.
+4. Launch the verified engine and journal ownership.
+5. Check engine health and service probes.
+6. Start the watchdog on success, or roll back before another candidate.
 
 Any startup failure rolls back already-created project resources. A failure to commit the ownership journal after engine launch also triggers rollback.
 
@@ -93,7 +81,7 @@ No Winsock/TCP reset is part of normal recovery.
 
 The helper accepts an allow-list of structured operations. After Start succeeds it launches a watchdog. If the recorded engine or project-owned network resource disappears, the watchdog invokes scoped Stop/rollback.
 
-The desktop currently launches the bundled helper directly. OS-native privilege authorization/installation is the remaining application boundary required for v1.
+The helper uses the existing OS-native authorization flow. The new `connect` operation holds the session lock through baseline checks, candidate start/probe/rollback, and final watchdog handoff. Selection does not replace the packet interception backends. See `docs/STRATEGIES.md` for probe limits and cache semantics.
 
 ## 9. Release proof
 

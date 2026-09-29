@@ -97,9 +97,10 @@ def main() -> int:
     (args.output / "manifests").mkdir()
     (args.output / "default").mkdir()
     shutil.copytree(DEFAULTS / "lists", args.output / "default" / "lists")
+    shutil.copytree(DEFAULTS / "payloads", args.output / "default" / "payloads")
 
-    strategy_src = DEFAULTS / "strategy.toml"
-    shutil.copy2(strategy_src, args.output / "default" / "strategy.toml")
+    catalog = tomllib.loads((DEFAULTS / "catalog.toml").read_text(encoding="utf-8"))
+    shutil.copy2(DEFAULTS / "catalog.toml", args.output / "default" / "catalog.toml")
 
     engine_name = str(upstream["artifact"])
     engine_src = args.input / engine_name
@@ -183,17 +184,19 @@ def main() -> int:
             ]
         )
     config_lines.append("")
-    (args.output / "default" / "config.toml").write_text(
-        "\n".join(config_lines),
-        encoding="utf-8",
-    )
-
-    for profile, mode in (("split", "multi-split"), ("disorder", "multi-disorder")):
-        config = "\n".join(config_lines).replace('name = "standard"', f'name = "{profile}"')
-        (args.output / "default" / f"config-{profile}.toml").write_text(config, encoding="utf-8")
-        strategy = strategy_src.read_text(encoding="utf-8").replace('id = "standard"', f'id = "{profile}"')
-        strategy += f'\n[[desync]]\nmode = "{mode}"\npositions = [1, 2]\n'
-        (args.output / "default" / f"{profile}.toml").write_text(strategy, encoding="utf-8")
+    # Each candidate is a complete validated strategy. Never append TCP modes
+    # to the standard strategy: v1 engines support only one second-stage mode.
+    for candidate in catalog["candidates"]:
+        for key in ("config", "strategy"):
+            if pathlib.PurePath(candidate[key]).name != candidate[key]:
+                raise SystemExit("catalog paths must be plain filenames")
+        strategy_path = DEFAULTS / candidate["strategy"]
+        strategy = tomllib.loads(strategy_path.read_text(encoding="utf-8"))
+        if strategy["id"] != candidate["id"]:
+            raise SystemExit("catalog/strategy id mismatch")
+        config = "\n".join(config_lines).replace('name = "standard"', f'name = "{candidate["id"]}"')
+        (args.output / "default" / candidate["config"]).write_text(config, encoding="utf-8")
+        shutil.copy2(strategy_path, args.output / "default" / candidate["strategy"])
 
     if (args.input / "licenses").is_dir():
         shutil.copytree(args.input / "licenses", args.output / "licenses")

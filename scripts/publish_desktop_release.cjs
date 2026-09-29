@@ -34,9 +34,9 @@ function collectAssets(root) {
   return files;
 }
 
-module.exports = async ({github, context, core}) => {
-  const files = collectAssets('release-assets');
-  const config = JSON.parse(fs.readFileSync('apps/desktop/src-tauri/tauri.conf.json', 'utf8'));
+module.exports = async ({github, context, core, root = process.cwd()}) => {
+  const files = collectAssets(path.join(root, 'release-assets'));
+  const config = JSON.parse(fs.readFileSync(path.join(root, 'apps/desktop/src-tauri/tauri.conf.json'), 'utf8'));
   const version = config.version;
   const tag = `v${version}`;
   if (context.ref.startsWith('refs/tags/') && context.ref !== `refs/tags/${tag}`) {
@@ -52,6 +52,12 @@ module.exports = async ({github, context, core}) => {
     'Linux x64: AppImage, deb and rpm (built on Ubuntu 24.04).', '',
     'All packages include the platform engine, helper and default profiles.',
     'SHA256SUMS.txt contains download checksums.', '',
+    'Автоподбор для сетей РФ: шесть профилей с отдельными правилами HTTP/TLS, QUIC и Discord/STUN. '
+      + 'Методы Flowseal адаптированы для nfqws, utunws и winws2: TCP split/disorder, fake и sequence overlap.',
+    'Кнопка «Подключиться» проверяет кандидатов, повторно подтверждает результат и сохраняет удачный вариант локально для сети. '
+      + 'Метод системного подключения и подтверждение прав сохранены.',
+    'Проверка доступности охватывает HTTPS/API/CDN по IPv4. '
+      + 'Воспроизведение видео, QUIC, WebSocket и голос Discord требуют отдельной проверки в сети пользователя.', '',
     'Validation: Rust formatting, Clippy and tests on Windows/macOS/Linux; frontend tests; '
       + 'real engine profile validation; native start/stop, duplicate-start rejection and watchdog rollback.',
     '', 'Installers are unsigned; Apple notarization is not configured. '
@@ -73,8 +79,10 @@ module.exports = async ({github, context, core}) => {
     throw new Error(`${tag} belongs to another commit. Bump the version before publishing new binaries.`);
   }
   const sums = [];
+  const expectedUploads = new Map();
   const upload = async (name, data) => {
     const digest = `sha256:${crypto.createHash('sha256').update(data).digest('hex')}`;
+    expectedUploads.set(name, {digest, size: data.length});
     const existing = release.assets.find(asset => asset.name === name);
     if (existing) {
       if (existing.digest !== digest || existing.size !== data.length) {
@@ -91,9 +99,11 @@ module.exports = async ({github, context, core}) => {
   }
   await upload('SHA256SUMS.txt', Buffer.from(sums.sort().join('\n') + '\n'));
   const assets = (await github.rest.repos.listReleaseAssets({...context.repo, release_id: release.id, per_page: 100})).data;
-  for (const name of [...expectedAssets, 'SHA256SUMS.txt']) {
-    if (!assets.some(asset => asset.name === name && asset.state === 'uploaded' && asset.size > 0)) {
-      throw new Error(`Upload is incomplete: ${name}`);
+  for (const [name, expected] of expectedUploads) {
+    const matching = assets.filter(asset => asset.name === name);
+    if (matching.length !== 1 || matching[0].state !== 'uploaded'
+        || matching[0].size !== expected.size || matching[0].digest !== expected.digest) {
+      throw new Error(`Upload verification failed: ${name}`);
     }
   }
   await github.rest.repos.updateRelease({...context.repo, release_id: release.id, draft: false});

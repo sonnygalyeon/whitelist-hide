@@ -90,7 +90,8 @@ def cleanup_windows_fixture(root):
 
 def exercise(root, cli, helper, live):
     platform = {'darwin': 'utunws', 'win32': 'winws'}.get(sys.platform, 'nfqws')
-    profiles = [('config.toml', 'strategy.toml'), ('config-split.toml', 'split.toml'), ('config-disorder.toml', 'disorder.toml')]
+    catalog = tomllib.loads((root / 'default' / 'catalog.toml').read_text(encoding='utf-8'))
+    profiles = [(c['config'], c['strategy']) for c in catalog['candidates']]
     for config_name, strategy_name in profiles:
         config_path, strategy = root / 'default' / config_name, root / 'default' / strategy_name
         config = tomllib.loads(config_path.read_text())

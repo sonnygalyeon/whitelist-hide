@@ -2,7 +2,7 @@ use std::error::Error;
 use std::fmt;
 use std::path::{Path, PathBuf};
 
-use crate::strategy::{DesyncStage, PortRange, StrategyDefinition};
+use crate::strategy::{DesyncStage, PortRange, Protocol, StrategyDefinition};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum EngineFlavor {
@@ -54,12 +54,147 @@ pub fn compile_strategy(
         .map_err(|error| CompileError::InvalidStrategy(error.to_string()))?;
 
     let base = strategy_path.parent().unwrap_or_else(|| Path::new("."));
-    let args = match engine {
-        EngineFlavor::Winws => compile_winws2(strategy, base)?,
-        EngineFlavor::Nfqws | EngineFlavor::Utunws => compile_v1(strategy, base)?,
+    let args = if strategy.schema == 2 {
+        compile_protocol_rules(strategy, base, engine)?
+    } else {
+        match engine {
+            EngineFlavor::Winws => compile_winws2(strategy, base)?,
+            EngineFlavor::Nfqws | EngineFlavor::Utunws => compile_v1(strategy, base)?,
+        }
     };
 
     Ok(CompiledStrategy { engine, args })
+}
+
+fn compile_protocol_rules(
+    strategy: &StrategyDefinition,
+    base: &Path,
+    engine: EngineFlavor,
+) -> Result<Vec<String>, CompileError> {
+    let mut args = Vec::new();
+    if engine == EngineFlavor::Winws {
+        if !strategy.filters.tcp_ports.is_empty() {
+            args.push(format!(
+                "--wf-tcp-out={}",
+                format_port_ranges(&strategy.filters.tcp_ports)
+            ));
+        }
+        if !strategy.filters.udp_ports.is_empty() {
+            args.push(format!(
+                "--wf-udp-out={}",
+                format_port_ranges(&strategy.filters.udp_ports)
+            ));
+        }
+        args.extend([
+            "--lua-init=@zapret-lib.lua".into(),
+            "--lua-init=@zapret-antidpi.lua".into(),
+        ]);
+    }
+    for (index, rule) in strategy.rules.iter().enumerate() {
+        if index > 0 {
+            args.push("--new".into());
+        }
+        let (l7, payload, kind) = match rule.protocol {
+            Protocol::Http => ("http", "http_req", WinwsPayload::Http),
+            Protocol::Tls => ("tls", "tls_client_hello", WinwsPayload::Tls),
+            Protocol::Quic => ("quic", "quic_initial", WinwsPayload::Quic),
+            Protocol::DiscordStun => (
+                "discord,stun",
+                "stun,discord_ip_discovery",
+                WinwsPayload::GenericUdp,
+            ),
+        };
+        args.push(format!(
+            "--filter-{}={}",
+            if rule.protocol.is_tcp() { "tcp" } else { "udp" },
+            format_port_ranges(&rule.ports)
+        ));
+        args.push(format!("--filter-l7={l7}"));
+        for (prefix, lists) in [
+            ("--hostlist=", &rule.domain_lists),
+            ("--ipset=", &rule.ip_lists),
+        ] {
+            for list in lists {
+                args.push(format!(
+                    "{prefix}{}",
+                    format_engine_data_path(&resolve_strategy_data_path(base, list)?)
+                ));
+            }
+        }
+        let fake = rule
+            .fake_payload
+            .as_ref()
+            .map(|path| read_hex_payload(base, path))
+            .transpose()?;
+        let pattern = rule
+            .split_pattern
+            .as_ref()
+            .map(|path| read_hex_payload(base, path))
+            .transpose()?;
+        if engine == EngineFlavor::Winws {
+            args.push(format!("--payload={payload}"));
+            let start = args.len();
+            compile_winws2_desync(&rule.desync, kind, &mut args);
+            for arg in &mut args[start..] {
+                *arg = arg.replace(":tcp_seq=-10000", rule.tcp_fooling.lua());
+                if let Some(fake) = &fake {
+                    *arg = arg.replace(kind.fake_blob(), fake);
+                }
+                if arg.starts_with("--lua-desync=multisplit:")
+                    && let (Some(overlap), Some(pattern)) = (rule.split_seqovl, &pattern)
+                {
+                    arg.push_str(&format!(":seqovl={overlap}:seqovl_pattern={pattern}"));
+                }
+            }
+        } else {
+            compile_v1_desync(&rule.desync, &mut args);
+            if rule.protocol.is_tcp()
+                && rule
+                    .desync
+                    .iter()
+                    .any(|s| matches!(s, DesyncStage::Fake { .. } | DesyncStage::FakeSplit { .. }))
+            {
+                args.push(format!("--dpi-desync-fooling={}", rule.tcp_fooling.v1()));
+            }
+            if let Some(fake) = fake {
+                let protocols: &[&str] = match rule.protocol {
+                    Protocol::Http => &["http"],
+                    Protocol::Tls => &["tls"],
+                    Protocol::Quic => &["quic"],
+                    Protocol::DiscordStun => &["discord", "stun"],
+                };
+                for protocol in protocols {
+                    args.push(format!("--dpi-desync-fake-{protocol}={fake}"));
+                }
+            }
+            if let (Some(overlap), Some(pattern)) = (rule.split_seqovl, pattern) {
+                args.push(format!("--dpi-desync-split-seqovl={overlap}"));
+                args.push(format!("--dpi-desync-split-seqovl-pattern={pattern}"));
+            }
+        }
+    }
+    Ok(args)
+}
+
+fn read_hex_payload(base: &Path, relative: &Path) -> Result<String, CompileError> {
+    use std::io::Read;
+    let path = base.join(relative);
+    let mut text = String::new();
+    std::fs::File::open(&path)
+        .and_then(|file| file.take(16_385).read_to_string(&mut text))
+        .map_err(|source| CompileError::Io { path, source })?;
+    let hex: String = text.chars().filter(|c| !c.is_ascii_whitespace()).collect();
+    if text.len() > 16_384
+        || hex.is_empty()
+        || hex.len() > 8192
+        || !hex.len().is_multiple_of(2)
+        || !hex.bytes().all(|b| b.is_ascii_hexdigit())
+    {
+        return Err(CompileError::InvalidStrategy(
+            "fake payload must contain 1..4096 bytes of hex text".into(),
+        ));
+    }
+    Ok(format!("0x{hex}"))
 }
 
 fn compile_v1(strategy: &StrategyDefinition, base: &Path) -> Result<Vec<String>, CompileError> {
@@ -356,7 +491,7 @@ fn compile_v1_desync(stages: &[DesyncStage], args: &mut Vec<String>) {
                 split_positions.extend(positions);
             }
             DesyncStage::FakeSplit { position } => {
-                modes.push("fakesplit");
+                modes.push("fakedsplit");
                 split_positions.push(*position);
             }
             DesyncStage::UdpLength { increment } => {
@@ -522,6 +657,96 @@ positions = [2, 1]
 "#;
 
     #[test]
+    fn all_catalog_candidates_compile_for_every_engine_with_isolated_protocols() {
+        let root =
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("../../apps/desktop/resources/default");
+        let catalog: toml::Value =
+            toml::from_str(&std::fs::read_to_string(root.join("catalog.toml")).unwrap()).unwrap();
+        for entry in catalog["candidates"].as_array().unwrap() {
+            let path = root.join(entry["strategy"].as_str().unwrap());
+            let strategy = StrategyDefinition::load(&path).unwrap();
+            assert_eq!(strategy.rules.len(), 4);
+            for engine in [
+                EngineFlavor::Winws,
+                EngineFlavor::Utunws,
+                EngineFlavor::Nfqws,
+            ] {
+                let compiled = compile_strategy(&strategy, &path, engine).unwrap();
+                let profiles: Vec<_> = compiled.args.split(|arg| arg == "--new").collect();
+                assert_eq!(profiles.len(), 4);
+                let voice = profiles
+                    .iter()
+                    .find(|p| p.iter().any(|a| a == "--filter-l7=discord,stun"))
+                    .unwrap();
+                assert!(!voice.iter().any(|a| a.starts_with("--hostlist=")));
+                for profile in &profiles {
+                    let udp = profile.iter().any(|a| a.starts_with("--filter-udp="));
+                    if udp {
+                        assert!(!profile.iter().any(|a| a.contains("multisplit")
+                            || a.contains("multidisorder")
+                            || a.contains("fooling")
+                            || a.contains("tcp_seq")));
+                    }
+                    if engine != EngineFlavor::Winws {
+                        assert_eq!(
+                            profile
+                                .iter()
+                                .filter(|a| a.starts_with("--dpi-desync="))
+                                .count(),
+                            1
+                        );
+                    }
+                }
+                // Windows CreateProcess limits its whole command line to 32767 UTF-16 units.
+                assert!(compiled.args.join(" ").encode_utf16().count() < 28000);
+                if strategy.id == "flowseal-split" {
+                    let needle = if engine == EngineFlavor::Winws {
+                        ":seqovl=681:seqovl_pattern=0x"
+                    } else {
+                        "--dpi-desync-split-seqovl-pattern=0x"
+                    };
+                    assert!(compiled.args.iter().any(|a| a.contains(needle)));
+                }
+                if strategy.id == "fake-timestamp" {
+                    let needle = if engine == EngineFlavor::Winws {
+                        ":tcp_ts=-1000"
+                    } else {
+                        "--dpi-desync-fooling=ts"
+                    };
+                    assert!(compiled.args.iter().any(|a| a.contains(needle)));
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn protocol_schema_rejects_invalid_compositions_and_voice_hostlists() {
+        let input = include_str!("../../../apps/desktop/resources/default/strategy.toml");
+        assert!(
+            StrategyDefinition::parse(&input.replace(
+                "protocol = \"discord-stun\"",
+                "protocol = \"discord-stun\"\ndomain_lists = [\"lists/general.txt\"]"
+            ))
+            .is_err()
+        );
+        assert!(
+            StrategyDefinition::parse(&input.replace(
+                "positions = [1] }",
+                "positions = [1] }, { mode = \"multi-disorder\", positions = [2] }"
+            ))
+            .is_err()
+        );
+        assert!(
+            StrategyDefinition::parse(&input.replace("protocol = \"tls\"", "protocol = \"quic\""))
+                .is_err()
+        );
+        assert!(
+            StrategyDefinition::parse(&input.replace("payloads/tls-google.hex", "../payload.hex"))
+                .is_err()
+        );
+    }
+
+    #[test]
     fn compiles_v1_deterministically() {
         let strategy = StrategyDefinition::parse(STRATEGY).expect("valid strategy");
         let compiled = compile_strategy(
@@ -604,8 +829,13 @@ positions = [2, 1]
             EngineFlavor::Utunws,
             EngineFlavor::Winws,
         ] {
-            let compiled = compile_strategy(&strategy, Path::new("strategy.toml"), engine)
-                .expect("compile bundled strategy");
+            let compiled = compile_strategy(
+                &strategy,
+                &Path::new(env!("CARGO_MANIFEST_DIR"))
+                    .join("../../apps/desktop/resources/default/strategy.toml"),
+                engine,
+            )
+            .expect("compile bundled strategy");
             let profiles: Vec<_> = compiled.args.split(|arg| arg == "--new").collect();
             let voice = profiles
                 .iter()
@@ -623,6 +853,50 @@ positions = [2, 1]
                 .expect("QUIC profile");
             assert!(quic.iter().any(|arg| arg.starts_with("--hostlist=")));
         }
+    }
+
+    #[test]
+    fn bundled_profile_covers_youtube_and_discord_hosts() {
+        let hosts = include_str!("../../../apps/desktop/resources/default/lists/general.txt");
+        for required in [
+            "youtube.com",
+            "googlevideo.com",
+            "ytimg.com",
+            "discord.com",
+            "discord.gg",
+            "discordcdn.com",
+        ] {
+            assert!(
+                hosts.lines().any(|host| host == required),
+                "missing {required}"
+            );
+        }
+
+        let strategy = StrategyDefinition::parse(include_str!(
+            "../../../apps/desktop/resources/default/strategy.toml"
+        ))
+        .expect("valid bundled strategy");
+        assert!(
+            strategy
+                .filters
+                .tcp_ports
+                .iter()
+                .any(|range| { range.start <= 443 && 443 <= range.end })
+        );
+        assert!(
+            strategy
+                .filters
+                .udp_ports
+                .iter()
+                .any(|range| { range.start <= 443 && 443 <= range.end })
+        );
+        assert!(
+            strategy
+                .filters
+                .udp_ports
+                .iter()
+                .any(|range| { range.start <= 19_294 && 19_344 <= range.end })
+        );
     }
 
     #[test]

@@ -1,4 +1,5 @@
 mod health;
+mod selection;
 #[cfg(windows)]
 mod windows_stdio;
 
@@ -27,6 +28,17 @@ fn main() {
     }
 
     let controller = SessionController::new(default_state_path());
+
+    if args.as_slice() == ["selection"] {
+        match selection::read(&controller) {
+            Ok(text) => print!("{text}"),
+            Err(error) => {
+                eprintln!("{error}");
+                std::process::exit(5);
+            }
+        }
+        return;
+    }
 
     if args.as_slice() == ["health"] {
         match health::read(controller.state_path()) {
@@ -59,10 +71,11 @@ fn main() {
         }
         return;
     }
-    if let [command, session] = args.as_slice() {
-        if command == "watchdog" && is_elevated() {
-            std::process::exit(watchdog(&controller, session));
-        }
+    if let [command, session] = args.as_slice()
+        && command == "watchdog"
+        && is_elevated()
+    {
+        std::process::exit(watchdog(&controller, session));
     }
     let _lock = match operation_lock(controller.state_path()) {
         Ok(lock) => lock,
@@ -72,6 +85,22 @@ fn main() {
         }
     };
     let code = match args.as_slice() {
+        [command, root, selected, request_id] if command == "connect" => {
+            match selection::connect(&controller, Path::new(root), selected, request_id) {
+                Ok(report) => {
+                    println!(
+                        "{}",
+                        serde_json::to_string(&report).expect("serializable report")
+                    );
+                    // The JSON outcome distinguishes access failure from IPC failure.
+                    0
+                }
+                Err(error) => {
+                    eprintln!("{error}");
+                    5
+                }
+            }
+        }
         [command, config, strategy] if command == "start" => {
             match controller.start(Path::new(config), Path::new(strategy)) {
                 Ok(report) => {
@@ -116,7 +145,10 @@ fn main() {
 }
 
 fn requires_elevation(args: &[String]) -> bool {
-    matches!(args.first().map(String::as_str), Some("start" | "stop"))
+    matches!(
+        args.first().map(String::as_str),
+        Some("start" | "stop" | "connect")
+    )
 }
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]

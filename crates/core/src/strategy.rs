@@ -5,8 +5,6 @@ use std::path::{Path, PathBuf};
 
 use serde::Deserialize;
 
-const STRATEGY_SCHEMA: u32 = 1;
-
 #[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct StrategyDefinition {
@@ -14,12 +12,15 @@ pub struct StrategyDefinition {
     pub id: String,
     #[serde(default)]
     pub description: String,
+    #[serde(default)]
     pub filters: StrategyFilters,
     #[serde(default)]
     pub desync: Vec<DesyncStage>,
+    #[serde(default)]
+    pub rules: Vec<ProtocolRule>,
 }
 
-#[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, Deserialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct StrategyFilters {
     #[serde(default)]
@@ -61,9 +62,80 @@ pub enum DesyncStage {
     IpFragment2,
 }
 
+/// Packet classification stays inside the pinned zapret engines.
+#[derive(Debug, Clone, Copy, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "kebab-case")]
+pub enum Protocol {
+    Http,
+    Tls,
+    Quic,
+    DiscordStun,
+}
+
+impl Protocol {
+    pub const fn is_tcp(self) -> bool {
+        matches!(self, Self::Http | Self::Tls)
+    }
+}
+
+#[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct ProtocolRule {
+    pub protocol: Protocol,
+    pub ports: Vec<PortRange>,
+    #[serde(default)]
+    pub domain_lists: Vec<PathBuf>,
+    #[serde(default)]
+    pub ip_lists: Vec<PathBuf>,
+    pub desync: Vec<DesyncStage>,
+    #[serde(default)]
+    pub tcp_fooling: TcpFooling,
+    /// Hex text data only; never an executable or a command line fragment.
+    #[serde(default)]
+    pub fake_payload: Option<PathBuf>,
+    #[serde(default)]
+    pub split_seqovl: Option<u16>,
+    #[serde(default)]
+    pub split_pattern: Option<PathBuf>,
+}
+
+#[derive(Debug, Clone, Copy, Default, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "kebab-case")]
+pub enum TcpFooling {
+    #[default]
+    BadSeq,
+    Md5Sig,
+    Timestamp,
+}
+
+impl TcpFooling {
+    pub const fn v1(self) -> &'static str {
+        match self {
+            Self::BadSeq => "badseq",
+            Self::Md5Sig => "md5sig",
+            Self::Timestamp => "ts",
+        }
+    }
+    pub const fn lua(self) -> &'static str {
+        match self {
+            Self::BadSeq => ":tcp_seq=-10000",
+            Self::Md5Sig => ":tcp_md5",
+            Self::Timestamp => ":tcp_ts=-1000",
+        }
+    }
+}
+
 impl StrategyDefinition {
     pub fn parse(input: &str) -> Result<Self, StrategyError> {
-        let strategy: Self = toml::from_str(input).map_err(StrategyError::Parse)?;
+        let mut strategy: Self = toml::from_str(input).map_err(StrategyError::Parse)?;
+        if strategy.schema == 2 {
+            if strategy.filters != StrategyFilters::default() || !strategy.desync.is_empty() {
+                return Err(StrategyError::Invalid(
+                    "schema 2 uses only explicit protocol rules".into(),
+                ));
+            }
+            strategy.filters = strategy.capture_filters();
+        }
         strategy.validate()?;
         Ok(strategy)
     }
@@ -77,11 +149,30 @@ impl StrategyDefinition {
     }
 
     pub fn validate(&self) -> Result<(), StrategyError> {
-        if self.schema != STRATEGY_SCHEMA {
+        if !matches!(self.schema, 1 | 2) {
             return Err(StrategyError::Invalid(format!(
-                "unsupported strategy schema {}; expected {STRATEGY_SCHEMA}",
+                "unsupported strategy schema {}; expected 1 or 2",
                 self.schema
             )));
+        }
+
+        if self.schema == 1 && !self.rules.is_empty() {
+            return Err(StrategyError::Invalid(
+                "protocol rules require schema 2".into(),
+            ));
+        }
+        if self.schema == 2 {
+            if self.rules.is_empty()
+                || !self.desync.is_empty()
+                || self.filters != self.capture_filters()
+            {
+                return Err(StrategyError::Invalid(
+                    "invalid schema 2 capture rules".into(),
+                ));
+            }
+            for rule in &self.rules {
+                rule.validate()?;
+            }
         }
 
         if !safe_identifier(&self.id) {
@@ -138,6 +229,128 @@ impl StrategyDefinition {
             }
         }
 
+        Ok(())
+    }
+
+    fn capture_filters(&self) -> StrategyFilters {
+        let mut filters = StrategyFilters::default();
+        for rule in &self.rules {
+            let ports = if rule.protocol.is_tcp() {
+                &mut filters.tcp_ports
+            } else {
+                &mut filters.udp_ports
+            };
+            for port in &rule.ports {
+                if !ports.contains(port) {
+                    ports.push(*port);
+                }
+            }
+            for path in &rule.domain_lists {
+                if !filters.domain_lists.contains(path) {
+                    filters.domain_lists.push(path.clone());
+                }
+            }
+            for path in &rule.ip_lists {
+                if !filters.ip_lists.contains(path) {
+                    filters.ip_lists.push(path.clone());
+                }
+            }
+        }
+        filters
+    }
+}
+
+impl ProtocolRule {
+    fn validate(&self) -> Result<(), StrategyError> {
+        let invalid = |message: &str| StrategyError::Invalid(message.to_owned());
+        if self.ports.is_empty() || self.desync.is_empty() {
+            return Err(invalid("each protocol rule needs ports and desync stages"));
+        }
+        validate_ranges("rule ports", &self.ports)?;
+        if self.protocol == Protocol::DiscordStun && !self.domain_lists.is_empty() {
+            return Err(invalid(
+                "Discord/STUN has no hostname: a hostlist would disable voice matching",
+            ));
+        }
+        if self.protocol != Protocol::DiscordStun
+            && self.domain_lists.is_empty()
+            && self.ip_lists.is_empty()
+        {
+            return Err(invalid(
+                "HTTP/TLS/QUIC rules must be scoped to a domain or IP list",
+            ));
+        }
+        let mut fake = false;
+        let mut transform = false;
+        for stage in &self.desync {
+            match stage {
+                DesyncStage::Fake { repeats } => {
+                    if fake || transform || *repeats == 0 || *repeats > 20 {
+                        return Err(invalid("fake must be first, unique and repeat 1..20 times"));
+                    }
+                    fake = true;
+                }
+                _ => {
+                    if transform {
+                        return Err(invalid(
+                            "only one packet transform per rule is supported by all engines",
+                        ));
+                    }
+                    transform = true;
+                    match stage {
+                        DesyncStage::MultiSplit { positions }
+                        | DesyncStage::MultiDisorder { positions } => {
+                            if !self.protocol.is_tcp()
+                                || positions.is_empty()
+                                || positions.contains(&0)
+                            {
+                                return Err(invalid(
+                                    "TCP split/disorder requires non-zero positions",
+                                ));
+                            }
+                        }
+                        DesyncStage::FakeSplit { position } => {
+                            if !self.protocol.is_tcp() || *position == 0 {
+                                return Err(invalid(
+                                    "fake-split requires TCP and a non-zero position",
+                                ));
+                            }
+                        }
+                        DesyncStage::UdpLength { increment }
+                            if self.protocol.is_tcp() || *increment == 0 =>
+                        {
+                            return Err(invalid(
+                                "udp-length requires UDP and a non-zero increment",
+                            ));
+                        }
+                        _ => {}
+                    }
+                }
+            }
+        }
+        for path in self.domain_lists.iter().chain(self.ip_lists.iter()) {
+            validate_relative_data_path(path)?;
+        }
+        for path in self.fake_payload.iter().chain(self.split_pattern.iter()) {
+            validate_relative_data_path(path)?;
+        }
+        if self.fake_payload.is_some() && !fake {
+            return Err(invalid("fake payload requires a fake stage"));
+        }
+        if self.split_pattern.is_some() != self.split_seqovl.is_some() {
+            return Err(invalid("sequence overlap requires both length and pattern"));
+        }
+        if let Some(overlap) = self.split_seqovl
+            && (!(1..=2048).contains(&overlap)
+                || !self
+                    .desync
+                    .iter()
+                    .any(|s| matches!(s, DesyncStage::MultiSplit { .. })))
+        {
+            return Err(invalid(
+                "sequence overlap requires multi-split and a length of 1..2048",
+            ));
+        }
         Ok(())
     }
 }

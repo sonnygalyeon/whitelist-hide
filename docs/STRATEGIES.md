@@ -1,65 +1,65 @@
-# Structured strategies
+# Стратегии и автоматическое подключение
 
-Strategies are configuration data, not shell scripts.
+Исходники этой ветки добавляют автоподбор для пользователей российских сетей. Это не опубликованный установщик и не подтверждение работы у конкретного провайдера.
 
-A strategy file currently describes:
+## Устройство
 
-- TCP and UDP port ranges;
-- relative domain/IP list paths;
-- a validated sequence of supported desynchronization stages.
+`apps/desktop/resources/default/catalog.toml` задаёт порядок кандидатов. Каждый кандидат — отдельный законченный TOML-файл схемы 2. Правила HTTP, TLS, QUIC и Discord/STUN содержат свои порты, списки и действия. TCP/UDP-порты для перехвата выводятся из правил, чтобы backend и движок обрабатывали одинаковый набор.
 
-Unknown TOML fields are rejected.
+Схема 1 сохранена для существующих CLI-конфигураций. Новая схема запрещает смешивать общий набор действий с правилами, применять TCP split к UDP, требовать hostname от Discord/STUN и объединять несовместимые вторые стадии. Фрагменты команд и shell-скрипты в профилях не принимаются.
 
-Current stage names are:
+Распознавание HTTP Host, TLS ClientHello, QUIC Initial, Discord IP Discovery и STUN выполняют закреплённые движки. Компилятор переводит модель в аргументы v1 для Linux/macOS и Lua API zapret2 для Windows. Движки и платформенный способ перехвата не заменены.
 
-- `fake`
-- `multi-split`
-- `multi-disorder`
-- `fake-split`
-- `udp-length`
-- `ip-fragment2`
+| Кандидат | HTTP/TLS | QUIC и Discord/STUN |
+|---|---|---|
+| `flowseal-split` | multisplit, позиция 1, seqovl 681 с TLS-шаблоном | fake, 6 повторов |
+| `standard` | fake + multisplit, позиция 1, badseq | fake, 6 повторов |
+| `split` | multisplit, позиции 1 и 2 | fake, 6 повторов |
+| `disorder` | fake + multidisorder, позиция 1, badseq | fake, 6 повторов |
+| `fake-only` | fake, badseq | fake, 6 повторов |
+| `fake-timestamp` | fake, timestamp | fake, 6 повторов |
 
-The compiler translates validated data into arguments for the bundled `nfqws`
-(Linux), `utunws` (macOS), or `winws2` (Windows). It does not accept arbitrary
-engine command-line fragments. Windows profiles use the pinned engine's Lua
-API; Unix profiles use the v1 desynchronization arguments.
+Порядок берётся из каталога, последний подтверждённый вариант для этой сети проверяется первым.
 
-## Bundled profiles
+## Источники
 
-The desktop ships Standard (fake packets), Split (fake + multi-split), and
-Disorder (fake + multi-disorder). The latter two split TCP payloads at positions
-1 and 2. UDP uses the supported fake stage, not TCP splitting. Select a profile
-in the app before starting; changing a profile requires restarting filtration.
+Проверен официальный [Flowseal/zapret-discord-youtube](https://github.com/Flowseal/zapret-discord-youtube/tree/865da4f4c3659523bf79bc6edf0446e7d7969614), коммит `865da4f4c3659523bf79bc6edf0446e7d7969614`, в частности `general.bat`, `general (ALT2).bat` и `general (SIMPLE FAKE).bat`. Это адаптация совместимых приёмов, а не полный импорт BAT: не перенесены широкие игровые фильтры, все IPSet-списки, отдельные Google-подпрофили и все экспериментальные режимы.
 
-The bundled list covers YouTube pages, video delivery, images and API hosts,
-plus Discord pages, gateway, CDN, attachments and activities. Entries match
-subdomains too. The supplemental API/CDN domains come from the default lists
-of the macOS upstream pinned in `third_party/upstream.lock.toml`.
+Повторная сверка 29 сентября 2026: последний коммит upstream `249a70424aae2676f99c5363e21073ed89873eda` обновляет только `.service/ipset-service.txt` и `lists/ipset-all.txt.backup`. Используемые BAT-стратегии и payload не изменились; закреплённая версия сохранена.
 
-- HTTP/TLS: TCP 80, 443, 2053, 2083, 2087, 2096 and 8443, restricted by the
-  configured domain/IP lists.
-- QUIC: UDP 443, restricted by the same lists.
-- Discord voice discovery and STUN: UDP 19294–19344 and 50000–50100,
-  restricted by protocol detection instead of a hostname list. These packets
-  do not carry the HTTP Host/TLS SNI required for hostname matching.
+TLS, QUIC и Discord fake payloads сохранены как читаемые `.hex`, без исполняемого кода, с точным commit/SHA-256/размером в `payloads/provenance.json` и исходной лицензией MIT. Проверка происхождения входит в Python-тесты. Компилятор проверяет формат и размер данных и передаёт их движку inline, поэтому доступ к файлам payload после сброса прав не требуется. Списки доменов на macOS по-прежнему размещаются в каталоге сессии.
 
-These UDP ranges follow the pinned macOS upstream configuration. They are not
-a promise to cover every voice-server port: Discord assigns the endpoint at
-connection time. macOS currently routes IPv4 traffic only.
+Совместимость аргументов проверялась по исходникам движков, закреплённых в `third_party/upstream.lock.toml`. Windows использует `tcp_seq`, `tcp_ts`, `seqovl_pattern` Lua API; Unix — соответствующие `dpi-desync-*`. Поддерживаемый `fake-split` исправлен на имя `fakedsplit` в актуальном v1 CLI.
 
-## What the method can and cannot do
+## Подбор и доказательство результата
 
-DPI desynchronization changes how a filtering middlebox interprets the initial
-packets. It does not create a tunnel, change the destination IP, repair DNS, or
-make an unreachable route reachable. A strict destination-IP allowlist can
-therefore still prevent access. An encrypted or otherwise unrecognizable
-hostname can also prevent a domain-list profile from matching.
+1. Helper один раз запрашивает системные права, берёт блокировку и отказывается менять уже существующую сессию.
+2. Выполняет исходную проверку четырёх HTTPS-целей: YouTube `generate_204`, миниатюра `i.ytimg.com`, Discord Gateway API, изображение Discord CDN.
+3. Запускает кандидата через прежний `SessionController`, проверку SHA-256, журнал владения и платформенный backend.
+4. Проверяет цели параллельно, затем повторяет успешную проверку на новых соединениях. Проверяются TLS-сертификат, HTTP-код и ожидаемое содержимое/сигнатура. Редирект, блок-страница, 403, 429 или произвольный успешный TCP connect успехом не считаются.
+5. Если HTTPS подтверждён и движок жив, оставляет сессию и запускает watchdog. Иначе полностью останавливает попытку перед следующей. Ошибка очистки прекращает перебор.
+6. Возвращает отчёт с исходными результатами, каждой попыткой, ошибками, выбранной стратегией и идентификаторами запроса/сессии. UI не принимает устаревший отчёт за новое подключение. Windows читает этот отчёт после UAC, без зависимости от stdout отдельной консоли.
 
-Native CI checks that each bundled engine accepts all three profiles and can
-start, stop and recover from an unexpected exit. Those checks do not establish
-YouTube playback or Discord voice connectivity on a particular provider.
-Check playback, seeking, attachments and a voice call in the target network;
-try another bundled profile if needed and use the app's diagnostics on failure.
+На запрос HTTPS отведено 6 секунд, подключение — 3 секунды; лимит ответа 64 КиБ. Новые кандидаты не запускаются после 120 секунд перебора; начатая операция завершается своим таймаутом. Закрытие окна во время операции блокируется. Кнопка восстановления снова доступна после завершения.
 
-`examples/strategy.example.toml` remains a standalone example; the desktop uses
-the staged profiles generated from `apps/desktop/resources/default/`.
+HTTP-клиент не использует proxy-переменные окружения и не переиспользует соединения между попытками. Проверки явно идут по IPv4, который поддерживает текущий macOS backend. DNS системы не меняется. Проверочные запросы идут прямо на сервисы; внешней телеметрии и запроса геолокации/провайдера нет.
+
+Если HTTPS работал до подключения, приложение всё равно включает выбранную стратегию: работа главной страницы не означает доступное видео или голос. В этом случае отчёт указывает отсутствие доказанного улучшения, и кандидат не записывается в кэш как решение проблемы.
+
+## Кэш и диагностика
+
+Рядом с `runtime-state.json` хранятся `runtime-state.selection.json` и `runtime-state.selection-cache.json`. Кэш ограничен восемью сетями и семью днями. Ключ — хеш локального адреса и маршрута; содержимое каталога, конфигураций, манифеста движка, списков и payload также входит в ключ версии. Смена сети/версии или неудачный подбор инвалидирует соответствующую подсказку. Если маршрут определить нельзя, кэш не применяется. Любая подсказка всегда проверяется заново.
+
+Отчёт экспортируется штатной кнопкой вместе с health, журналом GUI и логом движка. Проверка здоровья каждые 5 секунд проверяет процесс и фильтр; повторный сетевой автотест требует нового подключения.
+
+## Границы проверки
+
+Автоматические проверки подтверждают HTTPS/API/CDN, но не скачивание `googlevideo`, скорость воспроизведения, HTTP/3/QUIC, WebSocket-сессию или Discord voice. Правила для QUIC/голоса применяются, однако их эффект нужно проверять воспроизведением и звонком в целевой сети. Discord UDP охвачен портами 19294–19344 и 50000–50100 с фильтром протокола, как в исходном наборе; это не все возможные голосовые порты.
+
+Строгий allowlist IP, недоступная маршрутизация, DNS-подмена, ECH и отдельные IPv6-пути могут требовать другого решения. DPI-десинхронизация не создаёт VPN-туннель и не изменяет IP назначения.
+
+## Проверка разработки
+
+`cargo test --workspace --locked`, Clippy, Node-тесты, Python-тесты staging/provenance и `npm run build` не создают релизных установщиков. CI дополнительно проверяет workspace на трёх ОС и Tauri-команды через `cargo check` на macOS. Сценарии автоподбора используют управляемые сетевые ответы: они проверяют порядок, подтверждение, отказ запуска, остановку, отказ очистки, устаревший кэш и смерть движка. Они не являются измерением обхода у провайдера РФ.
+
+`smoke_desktop_runtime.py` теперь читает все профили из каталога; при последующей нативной сборке он проверит принятие аргументов реальным движком и полный жизненный цикл сессии. Релизные workflow не запускаются этой веткой.

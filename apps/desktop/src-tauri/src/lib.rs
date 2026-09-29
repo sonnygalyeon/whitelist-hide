@@ -60,10 +60,12 @@ fn backend_status() -> Result<BackendStatus, String> {
 fn default_profile(app: tauri::AppHandle) -> Result<ProfileInfo, String> {
     let (config, strategy) = bundled_profile_paths(&app)?;
     Ok(ProfileInfo {
-        id: "standard",
-        name: "Standard",
+        id: "auto",
+        name: "Автоподбор — Россия",
         platform: Platform::detect().backend_name().to_owned(),
-        available: config.is_file() && strategy.is_file(),
+        available: config.is_file()
+            && strategy.is_file()
+            && strategy.with_file_name("catalog.toml").is_file(),
         config_path: config.display().to_string(),
         strategy_path: strategy.display().to_string(),
     })
@@ -73,10 +75,23 @@ fn default_profile(app: tauri::AppHandle) -> Result<ProfileInfo, String> {
 async fn session_start_default(
     app: tauri::AppHandle,
     profile: Option<String>,
+    request_id: String,
 ) -> Result<String, String> {
     let _guard = operation_guard()?;
-    let (config, strategy) =
-        selected_profile_paths(&app, profile.as_deref().unwrap_or("standard"))?;
+    let selected = profile.as_deref().unwrap_or("auto");
+    if !matches!(
+        selected,
+        "auto"
+            | "standard"
+            | "split"
+            | "disorder"
+            | "fake-only"
+            | "flowseal-split"
+            | "fake-timestamp"
+    ) {
+        return Err("Неизвестная стратегия".into());
+    }
+    let (config, strategy) = bundled_profile_paths(&app)?;
     if !config.is_file() || !strategy.is_file() {
         return Err(
             "Встроенный профиль не найден. Переустановите приложение из полного desktop-пакета."
@@ -87,13 +102,26 @@ async fn session_start_default(
     invoke_helper(
         &app,
         vec![
-            "start".to_owned(),
-            config.display().to_string(),
-            strategy.display().to_string(),
+            "connect".to_owned(),
+            config
+                .parent()
+                .ok_or("invalid profile directory")?
+                .display()
+                .to_string(),
+            selected.to_owned(),
+            request_id,
         ],
         false,
     )
-    .await
+    .await?;
+    // UAC launches in a separate console. The persisted report is the same
+    // transport on every OS and does not depend on inherited stdout.
+    session_selection(app).await
+}
+
+#[tauri::command]
+async fn session_selection(app: tauri::AppHandle) -> Result<String, String> {
+    invoke_helper(&app, vec!["selection".to_owned()], false).await
 }
 
 #[tauri::command]
@@ -183,9 +211,10 @@ async fn export_report(app: tauri::AppHandle, activity: String) -> Result<String
         .as_nanos();
     let path = dir.join(format!("whitelist-hide-diagnostics-{timestamp}.txt"));
     let health = session_health(app.clone()).await.unwrap_or_else(|e| e);
+    let selection = session_selection(app.clone()).await.unwrap_or_else(|e| e);
     let logs = engine_logs(app).await.unwrap_or_else(|e| e);
     let body = format!(
-        "whitelist-hide {}\nPlatform: {}\n\n{health}\n\nActivity\n{activity}\n\nEngine log\n{logs}\n",
+        "whitelist-hide {}\nPlatform: {}\n\n{health}\n\nSelection report\n{selection}\n\nActivity\n{activity}\n\nEngine log\n{logs}\n",
         app_version(),
         Platform::detect()
     );
@@ -205,8 +234,7 @@ pub fn run() {
         .setup(|app| {
             use tauri::menu::{Menu, MenuItem};
             use tauri::tray::TrayIconBuilder;
-            let show =
-                MenuItem::with_id(app, "show", "Открыть White Hide", true, None::<&str>)?;
+            let show = MenuItem::with_id(app, "show", "Открыть White Hide", true, None::<&str>)?;
             let quit = MenuItem::with_id(app, "quit", "Выйти…", true, None::<&str>)?;
             let menu = Menu::with_items(app, &[&show, &quit])?;
             if let Some(icon) = app.default_window_icon().cloned() {
@@ -242,6 +270,7 @@ pub fn run() {
             session_start_default,
             session_stop,
             session_health,
+            session_selection,
             engine_logs,
             export_report,
             quit_app

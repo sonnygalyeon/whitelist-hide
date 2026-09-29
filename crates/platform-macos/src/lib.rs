@@ -1,6 +1,7 @@
 use std::error::Error;
 use std::fmt;
 use std::io::{self, Write};
+use std::net::Ipv4Addr;
 use std::process::{Command, Stdio};
 
 use whitelist_hide_core::Platform;
@@ -38,16 +39,36 @@ pub fn inspect_network_snapshot() -> Result<MacNetworkSnapshot, MacOsError> {
             program: "/sbin/route".to_owned(),
             source,
         })?;
-    if !route.status.success() {
-        return Err(MacOsError::ActionUnavailable(
-            "cannot determine macOS default route".to_owned(),
-        ));
-    }
     let route_text = String::from_utf8_lossy(&route.stdout);
-    let interface = route_value(&route_text, "interface:")
-        .ok_or_else(|| MacOsError::ActionUnavailable("default interface missing".to_owned()))?;
-    let gateway = route_value(&route_text, "gateway:")
-        .ok_or_else(|| MacOsError::ActionUnavailable("default gateway missing".to_owned()))?;
+    let physical_route = if route.status.success() {
+        parse_route_get_default(&route_text)
+    } else {
+        None
+    };
+    let (interface, gateway) = match physical_route {
+        Some(route) => route,
+        None => {
+            let netstat = Command::new("/usr/sbin/netstat")
+                .args(["-rn", "-f", "inet"])
+                .output()
+                .map_err(|source| MacOsError::CommandIo {
+                    program: "/usr/sbin/netstat".to_owned(),
+                    source,
+                })?;
+            if !netstat.status.success() {
+                return Err(MacOsError::ActionUnavailable(
+                    "cannot determine a physical macOS default route".to_owned(),
+                ));
+            }
+            parse_physical_default_route(&String::from_utf8_lossy(&netstat.stdout)).ok_or_else(
+                || {
+                    MacOsError::ActionUnavailable(
+                        "physical default route with an IPv4 gateway is unavailable".to_owned(),
+                    )
+                },
+            )?
+        }
+    };
 
     let _ = Command::new("/sbin/ping")
         .args(["-c", "1", "-t", "1", &gateway])
@@ -716,6 +737,37 @@ fn route_value(text: &str, key: &str) -> Option<String> {
     })
 }
 
+fn parse_route_get_default(text: &str) -> Option<(String, String)> {
+    let interface = route_value(text, "interface:")?;
+    let gateway = route_value(text, "gateway:")?;
+    if !is_physical_interface(&interface) || gateway.parse::<Ipv4Addr>().is_err() {
+        return None;
+    }
+    Some((interface, gateway))
+}
+
+fn parse_physical_default_route(text: &str) -> Option<(String, String)> {
+    text.lines().find_map(|line| {
+        let mut fields = line.split_whitespace();
+        if fields.next()? != "default" {
+            return None;
+        }
+        let gateway = fields.next()?;
+        let _flags = fields.next()?;
+        let interface = fields.next()?;
+        if gateway.parse::<Ipv4Addr>().is_err() || !is_physical_interface(interface) {
+            return None;
+        }
+        Some((interface.to_owned(), gateway.to_owned()))
+    })
+}
+
+fn is_physical_interface(interface: &str) -> bool {
+    interface.strip_prefix("en").is_some_and(|suffix| {
+        !suffix.is_empty() && suffix.bytes().all(|byte| byte.is_ascii_digit())
+    })
+}
+
 fn parse_pf_status(text: &str) -> Option<String> {
     text.lines().find_map(|line| {
         let line = line.trim();
@@ -801,6 +853,31 @@ mod tests {
             Some("192.168.1.1".to_owned())
         );
         assert_eq!(route_value(route, "interface:"), Some("en0".to_owned()));
+        assert_eq!(
+            parse_route_get_default(route),
+            Some(("en0".to_owned(), "192.168.1.1".to_owned()))
+        );
+    }
+
+    #[test]
+    fn rejects_vpn_route_without_a_physical_gateway() {
+        let route = "route to: default\ndestination: default\ninterface: utun5\n";
+        assert_eq!(parse_route_get_default(route), None);
+    }
+
+    #[test]
+    fn finds_physical_route_beside_vpn_default() {
+        let routes = "Routing tables\n\nInternet:\nDestination Gateway Flags Netif Expire\ndefault 192.168.1.1 UGScg en0\ndefault link#24 UCSIg utun5\n";
+        assert_eq!(
+            parse_physical_default_route(routes),
+            Some(("en0".to_owned(), "192.168.1.1".to_owned()))
+        );
+    }
+
+    #[test]
+    fn ignores_virtual_and_link_layer_default_routes() {
+        let routes = "default link#24 UCSIg utun5\ndefault 10.0.0.1 UGScg bridge0\n";
+        assert_eq!(parse_physical_default_route(routes), None);
     }
 
     #[test]

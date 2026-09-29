@@ -25,9 +25,9 @@
       <article class="card" aria-labelledby="profile-heading">
         <div class="section-heading"><h2 id="profile-heading">Профиль подключения</h2><span id="profile-state" class="pill">Проверка</span></div>
         <label for="profile" class="field-label">Стратегия</label>
-        <select id="profile" disabled><option value="standard">Стандартный</option><option value="split">Разделение пакетов</option><option value="disorder">Изменение порядка</option></select>
-        <p class="muted profile-description" id="profile-description">Базовая обработка HTTPS, QUIC и голосового трафика Discord.</p>
-        <p class="hint">Если сервис недоступен, отключите фильтр и попробуйте другой профиль.</p>
+        <select id="profile" disabled><option value="auto" selected>Автоподбор — Россия</option><option value="flowseal-split">TLS overlap</option><option value="fake-timestamp">Fake + timestamp</option><option value="standard">Стандартный</option><option value="split">Разделение пакетов</option><option value="disorder">Изменение порядка</option><option value="fake-only">Fake без разделения</option></select>
+        <p class="muted profile-description" id="profile-description">Автоматическая проверка стратегий для YouTube и Discord. Рабочий вариант сохраняется для вашей сети.</p>
+        <p class="hint">При подключении проверяются HTTPS и CDN. Видео, QUIC и голос Discord нужно проверить в самих приложениях. Подбор может занять около двух минут.</p>
         <dl class="facts"><div><dt>Компоненты</dt><dd id="runtime-state">Проверяем…</dd></div><div><dt>Проверка сессии</dt><dd>Каждые 5 секунд</dd></div></dl>
       </article>
       <article class="card" aria-labelledby="diagnostic-heading">

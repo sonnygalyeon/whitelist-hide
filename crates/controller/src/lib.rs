@@ -1,5 +1,9 @@
+pub mod connection;
+
 use std::error::Error;
 use std::fmt;
+use std::fs;
+use std::io;
 use std::path::{Path, PathBuf};
 
 use serde::Serialize;
@@ -220,6 +224,10 @@ impl SessionController {
             self.state.clear()?;
         }
 
+        if platform == Platform::MacOS {
+            cleanup_macos_data_files(self.state.path(), &state.session_id)?;
+        }
+
         Ok(true)
     }
 
@@ -308,6 +316,7 @@ impl SessionController {
             ));
         }
         let snapshot = inspect_network_snapshot()?;
+        let (args, staged_data) = stage_macos_data_files(&args, self.state.path(), session_id)?;
         let options = EngineLaunchOptions {
             args,
             env: vec![
@@ -317,7 +326,12 @@ impl SessionController {
             ],
         };
 
-        launch_verified_engine_with_options(manifest, binary, &options, &self.state, session_id)?;
+        if let Err(error) =
+            launch_verified_engine_with_options(manifest, binary, &options, &self.state, session_id)
+        {
+            let _ = fs::remove_dir_all(&staged_data);
+            return Err(error.into());
+        }
 
         let result = (|| -> Result<Option<String>, ControllerError> {
             wait_for_owned_utun(100)?;
@@ -344,6 +358,7 @@ impl SessionController {
                         let _ = release_pf_token(token);
                     }
                     let _ = stop_recorded_engine(&self.state);
+                    let _ = fs::remove_dir_all(&staged_data);
                     return Err(error);
                 }
                 Ok(())
@@ -351,6 +366,7 @@ impl SessionController {
             Err(error) => {
                 let _ = clear_owned_pf_anchor();
                 let _ = stop_recorded_engine(&self.state);
+                let _ = fs::remove_dir_all(&staged_data);
                 Err(error)
             }
         }
@@ -392,6 +408,92 @@ impl SessionController {
         self.state.save(&state)?;
         Ok(())
     }
+}
+
+const MACOS_DATA_ARGUMENTS: [&str; 2] = ["--hostlist=", "--ipset="];
+
+fn stage_macos_data_files(
+    args: &[String],
+    state_path: &Path,
+    session_id: &str,
+) -> Result<(Vec<String>, PathBuf), ControllerError> {
+    let state_parent = state_path.parent().unwrap_or_else(|| Path::new("."));
+    let data_parent = state_parent.join("session-data");
+    create_public_directory(&data_parent)?;
+    let session_data = data_parent.join(session_id);
+    fs::create_dir(&session_data).map_err(|source| ControllerError::RuntimeData {
+        path: session_data.clone(),
+        source,
+    })?;
+    set_runtime_permissions(&session_data, 0o755)?;
+
+    let mut staged_args = Vec::with_capacity(args.len());
+    let mut index = 0usize;
+    for arg in args {
+        let Some((prefix, source)) = MACOS_DATA_ARGUMENTS
+            .iter()
+            .find_map(|prefix| arg.strip_prefix(prefix).map(|source| (*prefix, source)))
+        else {
+            staged_args.push(arg.clone());
+            continue;
+        };
+
+        let kind = prefix.trim_start_matches("--").trim_end_matches('=');
+        let target = session_data.join(format!("{kind}-{index}.txt"));
+        if let Err(source_error) = fs::copy(source, &target) {
+            let _ = fs::remove_dir_all(&session_data);
+            return Err(ControllerError::RuntimeData {
+                path: PathBuf::from(source),
+                source: source_error,
+            });
+        }
+        if let Err(error) = set_runtime_permissions(&target, 0o644) {
+            let _ = fs::remove_dir_all(&session_data);
+            return Err(error);
+        }
+        staged_args.push(format!("{prefix}{}", target.display()));
+        index += 1;
+    }
+
+    Ok((staged_args, session_data))
+}
+
+fn cleanup_macos_data_files(state_path: &Path, session_id: &str) -> Result<(), ControllerError> {
+    let state_parent = state_path.parent().unwrap_or_else(|| Path::new("."));
+    let session_data = state_parent.join("session-data").join(session_id);
+    match fs::remove_dir_all(&session_data) {
+        Ok(()) => Ok(()),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(()),
+        Err(source) => Err(ControllerError::RuntimeData {
+            path: session_data,
+            source,
+        }),
+    }
+}
+
+fn create_public_directory(path: &Path) -> Result<(), ControllerError> {
+    fs::create_dir_all(path).map_err(|source| ControllerError::RuntimeData {
+        path: path.to_path_buf(),
+        source,
+    })?;
+    set_runtime_permissions(path, 0o755)
+}
+
+#[cfg(unix)]
+fn set_runtime_permissions(path: &Path, mode: u32) -> Result<(), ControllerError> {
+    use std::os::unix::fs::PermissionsExt;
+
+    fs::set_permissions(path, fs::Permissions::from_mode(mode)).map_err(|source| {
+        ControllerError::RuntimeData {
+            path: path.to_path_buf(),
+            source,
+        }
+    })
+}
+
+#[cfg(not(unix))]
+fn set_runtime_permissions(_path: &Path, _mode: u32) -> Result<(), ControllerError> {
+    Ok(())
 }
 
 fn verify_binding(manifest_path: &Path, binary_path: &Path) -> Result<(), ControllerError> {
@@ -442,6 +544,7 @@ pub enum ControllerError {
     StatePlatformMismatch { recorded: String, actual: String },
     HealthCheck(String),
     Rollback(String),
+    RuntimeData { path: PathBuf, source: io::Error },
 }
 
 impl fmt::Display for ControllerError {
@@ -466,11 +569,21 @@ impl fmt::Display for ControllerError {
             }
             Self::HealthCheck(message) => write!(f, "health check failed: {message}"),
             Self::Rollback(message) => write!(f, "rollback error: {message}"),
+            Self::RuntimeData { path, source } => {
+                write!(f, "runtime data error at {}: {source}", path.display())
+            }
         }
     }
 }
 
-impl Error for ControllerError {}
+impl Error for ControllerError {
+    fn source(&self) -> Option<&(dyn Error + 'static)> {
+        match self {
+            Self::RuntimeData { source, .. } => Some(source),
+            _ => None,
+        }
+    }
+}
 
 impl From<EngineRuntimeError> for ControllerError {
     fn from(value: EngineRuntimeError) -> Self {
@@ -493,5 +606,58 @@ impl From<whitelist_hide_linux::LinuxError> for ControllerError {
 impl From<whitelist_hide_macos::MacOsError> for ControllerError {
     fn from(value: whitelist_hide_macos::MacOsError) -> Self {
         Self::MacOs(value)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn stages_macos_lists_for_unprivileged_engine_access() {
+        let root = std::env::temp_dir().join(format!(
+            "whitelist-hide-controller-test-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let private = root.join("private bundle");
+        fs::create_dir_all(&private).unwrap();
+        let source = private.join("general.txt");
+        fs::write(&source, "youtube.com\ndiscord.com\n").unwrap();
+        let state_path = root.join("run/runtime-state.json");
+        let args = vec![
+            "--dpi-desync=fake".to_owned(),
+            format!("--hostlist={}", source.display()),
+        ];
+
+        let (staged, session_dir) =
+            stage_macos_data_files(&args, &state_path, "session-test").unwrap();
+        assert_eq!(staged[0], args[0]);
+        let staged_path = PathBuf::from(staged[1].strip_prefix("--hostlist=").unwrap());
+        assert_ne!(staged_path, source);
+        assert_eq!(
+            fs::read_to_string(&staged_path).unwrap(),
+            "youtube.com\ndiscord.com\n"
+        );
+
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            assert_eq!(
+                fs::metadata(&session_dir).unwrap().permissions().mode() & 0o777,
+                0o755
+            );
+            assert_eq!(
+                fs::metadata(&staged_path).unwrap().permissions().mode() & 0o777,
+                0o644
+            );
+        }
+
+        cleanup_macos_data_files(&state_path, "session-test").unwrap();
+        assert!(!session_dir.exists());
+        let _ = fs::remove_dir_all(root);
     }
 }

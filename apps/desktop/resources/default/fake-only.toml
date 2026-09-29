@@ -1,19 +1,19 @@
 schema = 2
-id = "standard"
-description = "Fake + split: explicit HTTP/TLS, QUIC and Discord/STUN rules."
+id = "fake-only"
+description = "Fake: explicit HTTP/TLS, QUIC and Discord/STUN rules."
 
 [[rules]]
 protocol = "http"
 ports = [{ start = 80, end = 80 }]
 domain_lists = ["lists/general.txt"]
-desync = [{ mode = "fake", repeats = 6 }, { mode = "multi-split", positions = [1] }]
+desync = [{ mode = "fake", repeats = 6 }]
 
 [[rules]]
 protocol = "tls"
 fake_payload = "payloads/tls-google.hex"
 ports = [{ start = 443, end = 443 }, { start = 2053, end = 2053 }, { start = 2083, end = 2083 }, { start = 2087, end = 2087 }, { start = 2096, end = 2096 }, { start = 8443, end = 8443 }]
 domain_lists = ["lists/general.txt"]
-desync = [{ mode = "fake", repeats = 6 }, { mode = "multi-split", positions = [1] }]
+desync = [{ mode = "fake", repeats = 6 }]
 
 [[rules]]
 protocol = "quic"

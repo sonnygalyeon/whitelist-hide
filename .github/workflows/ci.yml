@@ -35,3 +35,42 @@ jobs:
 
       - name: Test
         run: cargo test --workspace --locked
+
+  source-checks:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: python scripts/release_gate.py
+      - run: python -m unittest discover -s scripts/tests
+      - run: node --test scripts/tests/publish_desktop_release.test.cjs
+      - run: npm ci
+        working-directory: apps/desktop
+      - run: npm test
+        working-directory: apps/desktop
+      - run: npm run build
+        working-directory: apps/desktop
+
+  desktop-check:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm ci
+        working-directory: apps/desktop
+      - run: npm run build
+        working-directory: apps/desktop
+      - run: npm exec tauri icon app-icon.svg -- --output src-tauri/icons
+        working-directory: apps/desktop
+      # Type-check the actual Tauri commands without building a sidecar or installer.
+      - run: cargo check --manifest-path apps/desktop/src-tauri/Cargo.toml --locked
+        env:
+          TAURI_CONFIG: '{"bundle":{"externalBin":[]}}'

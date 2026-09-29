@@ -1,0 +1,41 @@
+schema = 1
+revision = "ru-2026-09-25.1"
+region = "RU"
+source = "https://github.com/Flowseal/zapret-discord-youtube"
+
+[[candidates]]
+id = "flowseal-split"
+name = "TLS overlap"
+config = "config-flowseal-split.toml"
+strategy = "flowseal-split.toml"
+
+[[candidates]]
+id = "standard"
+name = "Fake + split"
+config = "config.toml"
+strategy = "strategy.toml"
+
+[[candidates]]
+id = "split"
+name = "TCP split"
+config = "config-split.toml"
+strategy = "split.toml"
+
+[[candidates]]
+id = "disorder"
+name = "Fake + disorder"
+config = "config-disorder.toml"
+strategy = "disorder.toml"
+
+[[candidates]]
+id = "fake-only"
+name = "Fake"
+config = "config-fake-only.toml"
+strategy = "fake-only.toml"
+
+
+[[candidates]]
+id = "fake-timestamp"
+name = "Fake + timestamp"
+config = "config-fake-timestamp.toml"
+strategy = "fake-timestamp.toml"

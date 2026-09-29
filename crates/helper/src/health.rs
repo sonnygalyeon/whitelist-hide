@@ -15,12 +15,13 @@ pub fn now() -> u64 {
 pub fn publish(controller: &SessionController) -> Result<(), Box<dyn std::error::Error>> {
     let report = controller.health()?;
     let text = format!(
-        "timestamp={}\nsession_present={}\nrunning={}\nengine_alive={}\nnetwork_resource={}\n",
+        "timestamp={}\nsession_present={}\nrunning={}\nengine_alive={}\nnetwork_resource={}\nsession_id={}\n",
         now(),
         controller.state_path().exists(),
         report.running,
         report.engine_alive,
         report.owned_network_resource_present,
+        controller.session_id()?.unwrap_or_default(),
     );
     let path = controller.state_path().with_extension("health");
     let tmp = path.with_extension("health.new");

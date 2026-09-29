@@ -1,72 +1,19 @@
-# Application / GUI architecture
+# Desktop connection flow
 
-whitelist-hide uses a Tauri 2 desktop shell on top of the same Rust diagnostics and backend model used by the CLI.
-
-## Current boundary
+Tauri resolves its packaged resources and starts one privileged helper operation:
 
 ```text
-WebView / JavaScript
-        |
-        | fixed Tauri commands only
-        v
-Tauri Rust process (unprivileged by design)
-        |
-        +-- backend_status: read-only AppService diagnostics
-        |
-        +-- session_start / session_stop / session_health
-                |
-                | direct process argv, no shell string
-                v
-        whitelist-hide-helper
-                |
-                v
-        SessionController
-                |
-        +-------+--------+
-        |       |        |
-      macOS   Linux   Windows
+connect <BUNDLED_PROFILE_DIRECTORY> <auto|CANDIDATE_ID> <REQUEST_ID>
 ```
 
-The UI does not receive a generic command executor. It cannot submit an arbitrary shell command to the helper. The Rust host resolves the packaged helper through Tauri's sidecar API, so bundle layout is not guessed from the GUI executable path.
+The frontend passes only a candidate id and request id. The resource directory comes from Tauri, not from the WebView. Only known ids are accepted; there is no generic command executor or shell capability. Elevation uses the existing UAC, macOS authorization or polkit path, once for the whole selection.
 
-## Helper protocol
+`SessionController` retains responsibility for artifact verification, scoped network setup and rollback. `connection::select_strategy` controls candidates and network probes; the privileged helper holds the operation lock until the result is complete. The GUI reports selection progress and prevents overlapping actions.
 
-The bundled helper accepts only:
+Read-only `selection` returns the progress/final JSON snapshot. Final results are bound to the request UUID and running session id; a previous success cannot mark a new session connected. This file also transports the result on Windows where UAC starts a separate console. `health` includes the session id and watchdog freshness. `logs`, `stop` and the low-level `start <CONFIG> <STRATEGY>` remain available.
 
-```text
-start <CONFIG> <STRATEGY>
-stop
-health
-watchdog   # internal child operation
-```
+The default option is **Автоподбор — Россия**. Manual options attempt only their selected strategy, with the same HTTPS verification. All failure details remain in the exported report. The five-second health refresh does not perform another service probe and is labelled accordingly.
 
-Configuration and strategy paths are passed as sidecar arguments, not interpolated into a privileged shell string. The WebView capability intentionally grants no shell execute/spawn permission.
+HTTPS validation is not a test of video playback, QUIC or a voice call. The UI displays that limit next to the result. If baseline HTTPS already passed, Connect still enables the selected filter and explicitly reports that improvement has not been demonstrated. See [STRATEGIES.md](STRATEGIES.md).
 
-## Privilege elevation
-
-The helper binary is bundled separately so the WebView and normal GUI process do not need to run permanently as root/Administrator.
-
-The remaining v1 task is OS-native elevation/installation:
-
-- Windows: install/authorize the narrow helper without elevating the WebView;
-- macOS: privileged helper/LaunchDaemon authorization;
-- Linux: polkit/systemd-style authorization where required.
-
-Until this is installed, direct helper invocation from an ordinary desktop session can fail with an OS permission error. This is intentional and is not hidden by falling back to broad shell elevation.
-
-## UI surface
-
-The current UI exposes:
-
-- backend state and diagnostics;
-- config path;
-- strategy path;
-- Start;
-- Stop;
-- Health.
-
-Logs/settings/installer UX remain release-gate work.
-
-## Mobile
-
-Android and iOS may reuse configuration, trust, compiler and UI concepts, but packet interception requires separate mobile-specific backends and is not part of desktop v1.
+The frontend development build is a read-only preview. No network mutation runs inside the WebView. Mobile interception backends are outside this desktop task.

@@ -1,11 +1,15 @@
 import { invoke, isTauri } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
-import { parseHealth, friendlyError } from './state.js';
+import { parseHealth, friendlyError, parseSelection, verifiedSelection } from './state.js';
 import './style.css';
 
 const $ = id => document.getElementById(id);
 const descriptions = {
-  standard: 'Базовая обработка HTTPS, QUIC и голосового трафика Discord.',
+  'flowseal-split': 'Разделение TCP с наложением TLS-последовательности. Отдельные правила QUIC и Discord UDP.',
+  'fake-timestamp': 'Fake-пакеты с изменённой временной меткой TCP. Отдельные правила QUIC и Discord UDP.',
+  auto: 'Подбор стратегии для YouTube и Discord с проверкой HTTPS. Рабочий вариант повторно проверяется при каждом подключении.',
+  'fake-only': 'Fake-пакеты для HTTP/TLS, QUIC и Discord UDP без разделения TCP.',
+  standard: 'YouTube и Discord: fake-пакеты, разделение TCP, обработка QUIC и голосового UDP.',
   split: 'Разделение TCP-пакетов; отдельная обработка QUIC и голосового трафика.',
   disorder: 'Изменение порядка частей TCP-пакета; отдельная обработка UDP.',
 };
@@ -17,6 +21,9 @@ let known = false;
 let native = isTauri();
 let errorSticky = false;
 let timer;
+let selection = null;
+let requestId = null;
+let selectionRefreshing = false;
 
 function event(message, tone = 'info') {
   const row = document.createElement('div');
@@ -38,7 +45,7 @@ function visual(kind, title, detail) {
 }
 function controls() {
   $('toggle').disabled = !native || busy || refreshing || !known || (!health.session && !available);
-  $('toggle').textContent = busy ? 'Подождите…' : health.session ? 'Отключить' : 'Включить';
+  $('toggle').textContent = busy ? 'Подождите…' : health.session ? 'Отключить' : 'Подключиться';
   $('toggle').classList.toggle('danger', health.session);
   $('profile').disabled = busy || !known || health.session || !available;
   $('refresh').disabled = !native || busy || refreshing;
@@ -49,6 +56,7 @@ function controls() {
 function diagnostics() {
   $('diagnostics').replaceChildren();
   const items = [
+    ['Проверка доступа', verifiedSelection(selection, health) ? `HTTPS проверен при подключении · ${selection.strategy}` : 'Доступ не подтверждён', verifiedSelection(selection, health)],
     ['Компоненты приложения', available ? 'Встроенный профиль найден' : 'Не установлен полный пакет', available],
     ['Сетевой движок', known ? (health.engine ? 'Процесс работает' : 'Остановлен') : 'Состояние неизвестно', known && health.engine],
     ['Сетевой фильтр', known ? (health.network ? 'Ресурс активен' : 'Не активен') : 'Состояние неизвестно', known && health.network],
@@ -71,10 +79,10 @@ async function refresh(log = false, force = false) {
     health = parseHealth(await invoke('session_health'));
     known = true;
     diagnostics();
-    if (!errorSticky || log || health.running) {
-      if (health.running) visual('running', 'Фильтрация включена', 'Движок работает, системный фильтр активен. Проверьте доступность нужного сервиса.');
+    if (!errorSticky || log) {
+      if (health.running) visual('running', verifiedSelection(selection, health) ? 'Подключено' : 'Фильтрация включена', verifiedSelection(selection, health) ? `${selection.message} ${selection.coverage}` : 'Движок работает. Доступность сервисов этой сессии не проверена.');
       else if (health.session) visual('error', 'Нужна проверка', 'Сессия не подтверждена. Остановите её кнопкой восстановления и повторите запуск.');
-      else if (available) visual('stopped', 'Готово к подключению', 'Выберите профиль и нажмите «Включить». Система запросит права администратора.');
+      else if (available) visual('stopped', 'Готово к подключению', 'Выберите профиль и нажмите «Подключиться». Система запросит права администратора.');
     }
     if (previous && !health.running) event('Работа сессии прервана. Проверьте журнал движка.', 'error');
     if (log) event(health.running ? 'Проверка: фильтрация активна.' : health.session ? 'Обнаружена незавершённая сессия.' : 'Проверка: активной сессии нет.');
@@ -85,23 +93,44 @@ async function refresh(log = false, force = false) {
     if (log) event(friendlyError(error), 'error');
   } finally { refreshing = false; controls(); }
 }
+async function readSelectionProgress() {
+  if (selectionRefreshing || !requestId) return;
+  selectionRefreshing = true;
+  const expected = requestId;
+  try {
+    const text = await invoke('session_selection');
+    const report = parseSelection(text);
+    if (requestId !== expected || report?.request_id !== expected || !busy || report.outcome !== 'checking') return;
+    visual('busy', 'Подбираем стратегию…', report.message);
+  } catch { /* the elevated helper may not have published its first report yet */ }
+  finally { selectionRefreshing = false; }
+}
 async function operate(stop = false) {
   if (busy || refreshing || !native) return false;
-  busy = true; errorSticky = false; controls();
+  busy = true; errorSticky = false; selection = null; controls();
   visual('busy', stop ? 'Остановка…' : 'Подключение…', 'Подтвердите системный запрос администратора, если он появится.');
   let success = false;
+  let progressTimer;
   try {
-    await invoke(stop ? 'session_stop' : 'session_start_default', stop ? {} : { profile: $('profile').value });
+    if (stop) {
+      await invoke('session_stop');
+    } else {
+      requestId = crypto.randomUUID();
+      progressTimer = setInterval(readSelectionProgress, 1200);
+      const result = await invoke('session_start_default', { profile: $('profile').value, requestId });
+      selection = parseSelection(result, requestId);
+      if (selection.outcome !== 'connected') throw new Error(selection.message);
+    }
     await refresh(false, true);
-    if (!known || (!stop && !health.running) || (stop && health.session)) throw new Error('Операция не подтверждена проверкой состояния. Сохраните отчёт и проверьте журнал.');
-    event(stop ? 'Сессия остановлена, её сетевые ресурсы удалены.' : `Включён профиль «${$('profile').selectedOptions[0].text}».`, 'ok');
+    if (!known || (!stop && !verifiedSelection(selection, health)) || (stop && health.session)) throw new Error('Операция не подтверждена проверкой состояния. Сохраните отчёт и проверьте журнал.');
+    event(stop ? 'Сессия остановлена, её сетевые ресурсы удалены.' : selection.message, 'ok');
     success = true;
   } catch (error) {
     errorSticky = true;
     visual('error', 'Операция не завершена', friendlyError(error));
     event(friendlyError(error), 'error');
     await refresh(false, true);
-  } finally { busy = false; controls(); }
+  } finally { clearInterval(progressTimer); requestId = null; busy = false; controls(); }
   return success;
 }
 $('toggle').addEventListener('click', () => operate(health.session));
@@ -109,7 +138,7 @@ $('recover').addEventListener('click', () => operate(true));
 $('refresh').addEventListener('click', () => { errorSticky = false; refresh(true); });
 $('profile').addEventListener('change', () => {
   $('profile-description').textContent = descriptions[$('profile').value];
-  try { localStorage.setItem('profile', $('profile').value); } catch { /* optional preference */ }
+  try { localStorage.setItem('profile-v2', $('profile').value); } catch { /* optional preference */ }
 });
 $('show-logs').addEventListener('click', async () => {
   try { $('engine-log').textContent = (await invoke('engine_logs')) || 'Движок ещё не записал сообщения.'; $('engine-log').hidden = false; }
@@ -135,7 +164,7 @@ async function requestClose() {
 
 async function init() {
   try {
-    const saved = localStorage.getItem('profile');
+    const saved = localStorage.getItem('profile-v2');
     if (saved && descriptions[saved]) { $('profile').value = saved; $('profile-description').textContent = descriptions[saved]; }
   } catch { /* storage can be disabled */ }
   if (!native) {
@@ -152,6 +181,7 @@ async function init() {
     $('profile-state').dataset.state = available ? 'ok' : 'error';
     $('runtime-state').textContent = available ? 'Установлены' : 'Не найдены';
     if (!available) visual('error', 'Пакет неполный', 'Установите полный desktop-пакет со встроенным движком.');
+    try { selection = parseSelection(await invoke('session_selection')); } catch { selection = null; }
     await refresh();
     await listen('close-requested', requestClose);
     timer = setInterval(() => refresh(), 5000);

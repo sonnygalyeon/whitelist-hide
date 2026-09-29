@@ -1,0 +1,22 @@
+{
+  "repository": "https://github.com/Flowseal/zapret-discord-youtube",
+  "commit": "865da4f4c3659523bf79bc6edf0446e7d7969614",
+  "license": "MIT",
+  "files": {
+    "tls-google.hex": {
+      "source": "bin/tls_clienthello_www_google_com.bin",
+      "size": 681,
+      "sha256": "936c2bee4cfb80aa3c426b2dcbcc834b3fbcd1adb17172959dc569c73a14275c"
+    },
+    "quic-google.hex": {
+      "source": "bin/quic_initial_www_google_com.bin",
+      "size": 1200,
+      "sha256": "f4589c57749f956bb30538197a521d7005f8b0a8723b4707e72405e51ddac50a"
+    },
+    "discord.hex": {
+      "source": "bin/ACTIVE_DISCORD_UDP.bin",
+      "size": 1200,
+      "sha256": "2fe18b3bd20807d36704d0b072092ee49ae84edca907a4420ab9a0f0f28fddcf"
+    }
+  }
+}
