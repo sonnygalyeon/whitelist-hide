@@ -1,6 +1,8 @@
-# Release candidate 1.0.0-rc.2 — опубликован
+# Release candidate 1.0.0-rc.3 — исправление macOS
 
-Исходники rc.2 опубликованы в `main`, тег `v1.0.0-rc.2` указывает на коммит `ec2e42acdc426546247a1058f0af0c7c624e07e0`. Все восемь установочных пакетов и контрольные суммы доступны в [GitHub Releases](https://github.com/sonnygalyeon/whitelist-hide/releases/tag/v1.0.0-rc.2). Проверенные результаты: [AUTO_STRATEGY_CHECKS.md](AUTO_STRATEGY_CHECKS.md).
+rc.3 добавляет ad-hoc подпись macOS приложения и всех трёх executable, проверку уже упакованного DMG, подписи и запуска скопированного GUI. Публикация выполняется после успешных нативных проверок четырёх сборок. [Установка и диагностика macOS](MACOS_INSTALL.md).
+
+Исторические результаты rc.2 сохранены в [AUTO_STRATEGY_CHECKS.md](AUTO_STRATEGY_CHECKS.md). Они подтверждали сборки, движки и SHA-256 файлов, но **не подпись приложения macOS**; rc.2 может вызывать сообщение «повреждено» на Apple Silicon.
 
 ## Реализовано
 

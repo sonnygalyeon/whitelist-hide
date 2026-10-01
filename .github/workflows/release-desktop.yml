@@ -163,7 +163,13 @@ jobs:
           make -C "upstream/$SUBDIR" "$BUILD_TARGET"
           test -x "upstream/$SUBDIR/$ARTIFACT"
           mkdir -p dist/engine
-          cp "upstream/$SUBDIR/$ARTIFACT" "dist/engine/$ARTIFACT"
+          # Upstream builds a universal binary; each download ships its native
+          # slice so GUI, helper and engine have the same architecture.
+          lipo "upstream/$SUBDIR/$ARTIFACT" -thin "$(uname -m)" -output "dist/engine/$ARTIFACT"
+          # Resources are not signed recursively by Tauri. Sign utunws before
+          # staging computes its manifest hash, then seal the outer .app last.
+          codesign --force --sign - --timestamp=none --options runtime "dist/engine/$ARTIFACT"
+          codesign --verify --strict --verbose=2 "dist/engine/$ARTIFACT"
           shasum -a 256 "dist/engine/$ARTIFACT" > dist/engine/SHA256SUMS
           {
             echo "source_commit=$COMMIT"
@@ -342,6 +348,25 @@ jobs:
       - name: Build desktop bundle
         working-directory: apps/desktop
         run: npm run tauri:build -- --ci -- --locked
+
+      - name: Verify the shipped macOS DMG and copied application
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          version="$(python3 -c 'import json; print(json.load(open("apps/desktop/src-tauri/tauri.conf.json"))["version"])')"
+          python3 -u scripts/verify_macos_bundle.py \
+            --bundle apps/desktop/src-tauri/target/release/bundle \
+            --arch "${{ matrix.arch }}" --version "$version" \
+            --cli target/release/whitelist-hide --launch \
+            --report dist/macos-package-verification.json
+
+      - name: Upload macOS package verification report
+        if: runner.os == 'macOS'
+        uses: actions/upload-artifact@v4
+        with:
+          name: macos-package-verification-${{ matrix.arch }}
+          path: dist/macos-package-verification.json
+          if-no-files-found: error
 
       - name: Package release downloads
         run: python scripts/package_desktop_release.py --platform "${{ matrix.name }}" --arch "${{ matrix.arch }}"

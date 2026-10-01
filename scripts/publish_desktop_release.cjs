@@ -60,9 +60,15 @@ module.exports = async ({github, context, core, root = process.cwd()}) => {
       + 'Воспроизведение видео, QUIC, WebSocket и голос Discord требуют отдельной проверки в сети пользователя.', '',
     'Validation: Rust formatting, Clippy and tests on Windows/macOS/Linux; frontend tests; '
       + 'real engine profile validation; native start/stop, duplicate-start rejection and watchdog rollback.',
-    '', 'Installers are unsigned; Apple notarization is not configured. '
+    'macOS: ad-hoc signatures for the app, helper and engine; DMG verification, '
+      + 'copied-app signature/architecture checks, packaged profile checks and GUI startup smoke test. '
+      + 'This fixes the missing application signature/resource seal in rc.2.',
+    '', 'macOS packages are ad-hoc signed, not Developer ID-signed or Apple-notarized. '
+      + 'First launch may require System Settings → Privacy & Security → Open Anyway. '
+      + 'For M1/M2/M3/M4 Macs choose White-Hide-macOS-arm64.dmg. '
+      + 'Windows installers are not publisher-signed. '
       + 'Windows Portable requires WebView2. Linux requires nftables and polkit. '
-      + 'Installed GUI dialogs, updates/uninstallation and connectivity in user networks still require testing.',
+      + 'User authorization dialogs, updates/uninstallation and connectivity in user networks still require testing.',
     prerelease ? 'This is a release candidate (Pre-release).' : '',
   ].filter(Boolean).join('\n\n');
   let release;
