@@ -1,6 +1,6 @@
-# Release candidate 1.0.0-rc.3 — исправление macOS
+# Release candidate 1.0.0-rc.3 — опубликован
 
-rc.3 добавляет ad-hoc подпись macOS приложения и всех трёх executable, проверку уже упакованного DMG, подписи и запуска скопированного GUI. Публикация выполняется после успешных нативных проверок четырёх сборок. [Установка и диагностика macOS](MACOS_INSTALL.md).
+[rc.3 опубликован](https://github.com/sonnygalyeon/whitelist-hide/releases/tag/v1.0.0-rc.3) с исходниками `b9723d1c98c2b88c66aa3f8161d409685ce931d8`. Все четыре нативные сборки и quality gates прошли. Выпуск добавляет ad-hoc подпись macOS приложения и всех трёх executable, проверку уже упакованного DMG, подписи и запуска скопированного GUI. [Проверенные результаты](MACOS_PACKAGE_CHECKS.md), [установка и диагностика macOS](MACOS_INSTALL.md).
 
 Исторические результаты rc.2 сохранены в [AUTO_STRATEGY_CHECKS.md](AUTO_STRATEGY_CHECKS.md). Они подтверждали сборки, движки и SHA-256 файлов, но **не подпись приложения macOS**; rc.2 может вызывать сообщение «повреждено» на Apple Silicon.
 
@@ -18,7 +18,7 @@ rc.3 добавляет ad-hoc подпись macOS приложения и вс
 
 ## Проверки
 
-29 сентября 2026 [CI](https://github.com/sonnygalyeon/whitelist-hide/actions/runs/36544420556) и [release-desktop](https://github.com/sonnygalyeon/whitelist-hide/actions/runs/36544420476) прошли на **точном commit SHA** релиза. Проверены Rust tests/fmt/clippy, frontend tests/build на трёх ОС, Tauri, упаковка и метаданные выпуска.
+1 октября 2026 [CI](https://github.com/sonnygalyeon/whitelist-hide/actions/runs/36856199561) и [release-desktop](https://github.com/sonnygalyeon/whitelist-hide/actions/runs/36856199739) прошли на **точном commit SHA** rc.3. Одно задание повторено после ошибки DNS при загрузке Rust dependencies, без изменения кода. Проверены Rust tests/fmt/clippy, frontend tests/build на трёх ОС, Tauri, упаковка и метаданные выпуска. macOS-пакеты дополнительно проверены после копирования из DMG.
 
 Workflow проверяет реальные параметры каждого профиля через `--dry-run`, затем на одноразовом runner выполняет запуск/остановку всех шести профилей, отклонение повторного запуска и rollback после принудительного завершения движка. Только успешный полный workflow может публиковать пакеты кандидата. Перед открытием релиза сверяются размеры и SHA-256 всех установщиков и файла контрольных сумм.
 
