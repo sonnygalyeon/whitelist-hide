@@ -1,0 +1,65 @@
+name: Audit published macOS packages
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Release tag to inspect
+        required: true
+        default: v1.0.0-rc.2
+  push:
+    branches: [diagnostics/macos-rc2-signature]
+permissions:
+  contents: read
+jobs:
+  audit:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-latest
+            asset: arm64
+          - os: macos-15-intel
+            asset: intel
+    runs-on: ${{ matrix.os }}
+    steps:
+      - name: Download, mount and inspect the published application
+        env:
+          RELEASE_TAG: ${{ inputs.tag || 'v1.0.0-rc.2' }}
+          ASSET_ARCH: ${{ matrix.asset }}
+        shell: python
+        run: |
+          import hashlib, json, os, pathlib, plistlib, subprocess, tempfile, urllib.request
+          tag = os.environ['RELEASE_TAG']
+          name = 'White-Hide-macOS-' + os.environ['ASSET_ARCH'] + '.dmg'
+          repo = 'https://api.github.com/repos/sonnygalyeon/whitelist-hide'
+          release = json.load(urllib.request.urlopen(repo + '/releases/tags/' + tag))
+          asset = next(a for a in release['assets'] if a['name'] == name)
+          with tempfile.TemporaryDirectory(prefix='white hide audit ') as tmp:
+              root = pathlib.Path(tmp)
+              dmg = root / name
+              dmg.write_bytes(urllib.request.urlopen(asset['browser_download_url']).read())
+              digest = hashlib.sha256(dmg.read_bytes()).hexdigest()
+              assert 'sha256:' + digest == asset['digest'], 'Release digest mismatch'
+              print('Published DMG SHA256 verified: ' + digest, flush=True)
+              subprocess.run(['hdiutil', 'verify', str(dmg)], check=True)
+              mount = root / 'mounted'
+              mount.mkdir()
+              subprocess.run(['hdiutil', 'attach', '-readonly', '-nobrowse', '-mountpoint', str(mount), str(dmg)], check=True)
+              try:
+                  app = next(mount.glob('*.app'))
+                  info = plistlib.loads((app / 'Contents/Info.plist').read_bytes())
+                  print('Bundle metadata: ' + json.dumps(info, sort_keys=True), flush=True)
+                  print('Resource seal exists: ' + str((app / 'Contents/_CodeSignature/CodeResources').is_file()), flush=True)
+                  for p in [app / 'Contents/MacOS' / info['CFBundleExecutable'],
+                            app / 'Contents/MacOS/whitelist-hide-helper',
+                            app / 'Contents/Resources/whitelist-hide/runtime/utunws']:
+                      subprocess.run(['file', str(p)], check=True)
+                      subprocess.run(['codesign', '--display', '--verbose=4', str(p)], check=False)
+                      subprocess.run(['codesign', '--verify', '--strict', '--verbose=2', str(p)], check=False)
+                  result = subprocess.run(['codesign', '--verify', '--deep', '--strict', '--verbose=4', str(app)])
+                  print('Published application signature verification exit code: ' + str(result.returncode), flush=True)
+                  assessment = subprocess.run(['spctl', '--assess', '--type', 'execute', '--verbose=4', str(app)])
+                  print('Gatekeeper assessment exit code: ' + str(assessment.returncode), flush=True)
+              finally:
+                  subprocess.run(['hdiutil', 'detach', str(mount)], check=True)
+              raise SystemExit(result.returncode)
